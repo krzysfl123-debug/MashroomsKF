@@ -1,0 +1,22 @@
+name: las-grudniowy
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 1 grudnia o 02:00 UTC, raz w roku. Cron nie ma "raz w roku", więc
+    # ograniczamy do 1. dnia miesiąca 12 (grudnia): minuta 0, godz 2, dzień 1, miesiąc 12.
+    - cron: "0 2 1 12 *"
+
+jobs:
+  odswiez-las:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python runner_grudniowy.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
