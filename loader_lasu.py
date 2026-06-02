@@ -35,18 +35,70 @@ BBOX = (16.90, 54.36, 17.20, 54.52)          # ~Słupsk i okolice (lon_min,lat_m
 REGION_NAME = "Słupsk i okolice"
 RDLP_CD = "11"                                # Szczecinek
 
-BDL_URL = f"https://ogcapi.bdl.lasy.gov.pl/collections/{KOLEKCJA}/items"
+BDL_BASE = "https://ogcapi.bdl.lasy.gov.pl/collections"
 
 
-def pobierz_wydzielenia_bbox(bbox, page_limit=500, max_stron=40):
-    """Pobiera wszystkie wydzielenia w bbox, idąc za linkami 'next' (paginacja)."""
+def bdl_url(kolekcja):
+    return f"{BDL_BASE}/{kolekcja}/items"
+
+
+# Wszystkie 17 dyrekcji RDLP w BDL OGC API: (kolekcja, cd, przybliżony bbox zasięgu
+# lon_min,lat_min,lon_max,lat_max). Bboxy są zgrubne i NACHODZĄ na siebie — służą
+# tylko do USTALENIA KOLEJNOŚCI prób. Faktyczny filtr robi bbox rewiru po stronie
+# BDL, więc zapytanie do złej dyrekcji po prostu zwróci 0 i próbujemy dalej.
+RDLP_DYREKCJE = [
+    ("RDLP_Bialystok_wydzielenia",   "01", (21.5, 52.5, 24.2, 54.4)),
+    ("RDLP_Gdansk_wydzielenia",      "15", (17.2, 53.5, 19.8, 54.9)),
+    ("RDLP_Katowice_wydzielenia",    "02", (18.0, 49.4, 20.0, 51.2)),
+    ("RDLP_Krakow_wydzielenia",      "03", (19.4, 49.2, 21.5, 50.6)),
+    ("RDLP_Krosno_wydzielenia",      "04", (21.0, 49.0, 23.0, 50.3)),
+    ("RDLP_Lublin_wydzielenia",      "05", (21.6, 50.2, 24.2, 52.3)),
+    ("RDLP_Lodz_wydzielenia",        "06", (18.2, 50.8, 20.7, 52.4)),
+    ("RDLP_Olsztyn_wydzielenia",     "07", (19.3, 53.0, 22.5, 54.5)),
+    ("RDLP_Pila_wydzielenia",        "08", (15.8, 52.6, 17.8, 53.8)),
+    ("RDLP_Poznan_wydzielenia",      "09", (16.0, 51.6, 18.4, 53.0)),
+    ("RDLP_Radom_wydzielenia",       "10", (19.7, 50.5, 22.0, 51.8)),
+    ("RDLP_Szczecin_wydzielenia",    "12", (13.9, 52.5, 15.9, 54.0)),
+    ("RDLP_Szczecinek_wydzielenia",  "11", (15.5, 53.4, 17.6, 54.6)),
+    ("RDLP_Torun_wydzielenia",       "13", (17.4, 52.4, 19.6, 53.8)),
+    ("RDLP_Warszawa_wydzielenia",    "14", (20.0, 51.4, 22.5, 53.2)),
+    ("RDLP_Wroclaw_wydzielenia",     "16", (15.2, 50.4, 17.8, 51.6)),
+    ("RDLP_Zielona_Gora_wydzielenia","17", (14.4, 51.3, 16.4, 52.7)),
+]
+
+
+def dyrekcje_dla_bbox(bbox):
+    """Zwraca listę (kolekcja, cd) posortowaną wg trafności: najpierw dyrekcje,
+    których zgrubny zasięg pokrywa środek rewiru, potem najbliższe jako zapas.
+    Faktyczny filtr i tak robi bbox po stronie BDL — to tylko kolejność prób."""
+    lon_min, lat_min, lon_max, lat_max = bbox
+    clat = (lat_min + lat_max) / 2.0
+    clon = (lon_min + lon_max) / 2.0
+
+    trafne, reszta = [], []
+    for k, cd, (a, b, c, d) in RDLP_DYREKCJE:
+        if a <= clon <= c and b <= clat <= d:
+            trafne.append((k, cd))
+        else:
+            mx, my = (a + c) / 2, (b + d) / 2
+            reszta.append(((mx - clon) ** 2 + (my - clat) ** 2, k, cd))
+    reszta.sort()
+    # trafne najpierw, potem 3 najbliższe jako zapas (gdyby rewir leżał na styku dyrekcji)
+    return trafne + [(k, cd) for (_, k, cd) in reszta[:3]]
+
+
+def pobierz_wydzielenia_bbox(bbox, kolekcja=None, page_limit=500, max_stron=40):
+    """Pobiera wszystkie wydzielenia w bbox, idąc za linkami 'next' (paginacja).
+    kolekcja: nazwa kolekcji BDL (domyślnie globalna KOLEKCJA dla trybu Słupsk)."""
+    if kolekcja is None:
+        kolekcja = KOLEKCJA
     lon_min, lat_min, lon_max, lat_max = bbox
     params = {
         "bbox": f"{lon_min},{lat_min},{lon_max},{lat_max}",
         "limit": page_limit,
         "f": "json",
     }
-    url = BDL_URL
+    url = bdl_url(kolekcja)
     features = []
     strona = 0
     while url and strona < max_stron:
@@ -94,8 +146,11 @@ def db_conn():
     return psycopg2.connect(url)
 
 
-def zaladuj(features, conn):
-    """Wstawia drzewostany (D-STAN) do forest_stands. Zwraca liczbę wstawionych."""
+def zaladuj(features, conn, rdlp_cd=None):
+    """Wstawia drzewostany (D-STAN) do forest_stands. Zwraca (wstawione, pominięte).
+    rdlp_cd: kod dyrekcji zapisywany w rekordach (domyślnie globalny RDLP_CD)."""
+    if rdlp_cd is None:
+        rdlp_cd = RDLP_CD
     from shapely import wkb
     from psycopg2.extras import execute_values
 
@@ -129,7 +184,7 @@ def zaladuj(features, conn):
                 break
 
         rows.append((
-            "BDL", RDLP_CD, props.get("adr_for"),
+            "BDL", rdlp_cd, props.get("adr_for"),
             species, wiek, props.get("area_type"),
             rok,                                        # a_year = sam rok (int) albo None
             wkb.dumps(mp, hex=True, srid=4326),         # geometria -> WKB hex dla PostGIS
@@ -165,6 +220,30 @@ def utworz_region(conn, bbox, name, rdlp_cd):
         """, (name, rdlp_cd, lon_min, lat_min, lon_max, lat_max))
     conn.commit()
     print(f"  region utworzony: {name}")
+
+
+def zaladuj_obszar(conn, bbox, prog_min=1):
+    """ŁADOWANIE NA ŻĄDANIE: pobiera las dla dowolnego bbox (np. rewiru) i wstawia
+    do forest_stands. Sam dobiera dyrekcję RDLP — próbuje kolejno najtrafniejszych,
+    aż któraś zwróci sensowną liczbę drzewostanów. Zwraca (wstawione, kolekcja) albo (0, None).
+    Wywoływana przez nocnego agenta dla rewirów, które jeszcze nie mają lasu."""
+    for kolekcja, cd in dyrekcje_dla_bbox(bbox):
+        print(f"  [las] próbuję dyrekcji {kolekcja} (cd {cd}) dla bbox {bbox}")
+        try:
+            feats = pobierz_wydzielenia_bbox(bbox, kolekcja=kolekcja)
+        except Exception as e:
+            print(f"  [las] błąd pobierania z {kolekcja}: {e}")
+            continue
+        if len(feats) < prog_min:
+            print(f"  [las] {kolekcja}: tylko {len(feats)} obiektów — próbuję dalej")
+            continue
+        wstawione, pominiete = zaladuj(feats, conn, rdlp_cd=cd)
+        if wstawione >= prog_min:
+            print(f"  [las] OK: {kolekcja} -> wstawiono {wstawione} drzewostanów")
+            return wstawione, kolekcja
+        print(f"  [las] {kolekcja}: 0 D-STAN po filtrze — próbuję dalej")
+    print(f"  [las] nie znaleziono lasu dla bbox {bbox} w żadnej dyrekcji")
+    return 0, None
 
 
 def main():
