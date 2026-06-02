@@ -146,11 +146,15 @@ def db_conn():
     return psycopg2.connect(url)
 
 
-def zaladuj(features, conn, rdlp_cd=None):
-    """Wstawia drzewostany (D-STAN) do forest_stands. Zwraca (wstawione, pominięte).
-    rdlp_cd: kod dyrekcji zapisywany w rekordach (domyślnie globalny RDLP_CD)."""
+def zaladuj(features, conn, rdlp_cd=None, tabela="forest_stands"):
+    """Wstawia drzewostany (D-STAN) do podanej tabeli. Zwraca (wstawione, pominięte).
+    rdlp_cd: kod dyrekcji (domyślnie globalny RDLP_CD).
+    tabela: docelowa tabela (domyślnie forest_stands; przy dorocznym odświeżaniu
+            agent podaje forest_stands_new, by nie ruszać działającej bazy)."""
     if rdlp_cd is None:
         rdlp_cd = RDLP_CD
+    if tabela not in ("forest_stands", "forest_stands_new"):
+        raise ValueError(f"Niedozwolona tabela docelowa: {tabela}")
     from shapely import wkb
     from psycopg2.extras import execute_values
 
@@ -195,8 +199,8 @@ def zaladuj(features, conn, rdlp_cd=None):
         return 0, pominiete
 
     with conn.cursor() as cur:
-        execute_values(cur, """
-            insert into forest_stands
+        execute_values(cur, f"""
+            insert into {tabela}
               (source, rdlp_cd, adr_for, species_cd, spec_age, area_type, a_year, geom)
             values %s
         """, rows, template="(%s,%s,%s,%s,%s,%s,%s, st_geomfromewkb(decode(%s,'hex')))")
@@ -222,11 +226,11 @@ def utworz_region(conn, bbox, name, rdlp_cd):
     print(f"  region utworzony: {name}")
 
 
-def zaladuj_obszar(conn, bbox, prog_min=1):
+def zaladuj_obszar(conn, bbox, prog_min=1, tabela="forest_stands"):
     """ŁADOWANIE NA ŻĄDANIE: pobiera las dla dowolnego bbox (np. rewiru) i wstawia
-    do forest_stands. Sam dobiera dyrekcję RDLP — próbuje kolejno najtrafniejszych,
+    do podanej tabeli. Sam dobiera dyrekcję RDLP — próbuje kolejno najtrafniejszych,
     aż któraś zwróci sensowną liczbę drzewostanów. Zwraca (wstawione, kolekcja) albo (0, None).
-    Wywoływana przez nocnego agenta dla rewirów, które jeszcze nie mają lasu."""
+    tabela: docelowa (forest_stands na żądanie; forest_stands_new przy odświeżaniu)."""
     for kolekcja, cd in dyrekcje_dla_bbox(bbox):
         print(f"  [las] próbuję dyrekcji {kolekcja} (cd {cd}) dla bbox {bbox}")
         try:
@@ -237,7 +241,7 @@ def zaladuj_obszar(conn, bbox, prog_min=1):
         if len(feats) < prog_min:
             print(f"  [las] {kolekcja}: tylko {len(feats)} obiektów — próbuję dalej")
             continue
-        wstawione, pominiete = zaladuj(feats, conn, rdlp_cd=cd)
+        wstawione, pominiete = zaladuj(feats, conn, rdlp_cd=cd, tabela=tabela)
         if wstawione >= prog_min:
             print(f"  [las] OK: {kolekcja} -> wstawiono {wstawione} drzewostanów")
             return wstawione, kolekcja
