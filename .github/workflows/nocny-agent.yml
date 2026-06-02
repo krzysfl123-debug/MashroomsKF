@@ -1,31 +1,20 @@
-name: Nocny agent grzybowy
+name: nocny-agent
 
-# Kiedy się uruchamia:
 on:
+  workflow_dispatch:
   schedule:
-    # Cron w UTC. 01:30 UTC = 03:30 czasu polskiego (latem 02:30 zimą).
-    # Po północy, gdy archiwum ERA5 ma już komplet wczorajszego dnia.
     - cron: "30 1 * * *"
-  workflow_dispatch:   # pozwala też odpalić ręcznie z zakładki Actions (przycisk "Run workflow")
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Pobierz kod repozytorium
-        uses: actions/checkout@v4
-
-      - name: Ustaw Pythona
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Zainstaluj zależności
-        run: pip install -r requirements.txt
-
-      - name: Uruchom nocny agent
+      - run: pip install -r requirements.txt
+      - run: python runner.py
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python runner.py
-
