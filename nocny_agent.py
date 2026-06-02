@@ -544,6 +544,62 @@ def run_scan(horyzont=tuple(range(0, 29))):
         conn.close()
 
 
+def odswiez_caly_las():
+    """DOROCZNE ODŚWIEŻENIE (osobny workflow, np. 1 grudnia): pobiera świeży las
+    z BDL dla wszystkich rewirów i regionów, po czym podmienia stary.
+    BEZPIECZNIE: najpierw ładuje nowy las do TABELI TYMCZASOWEJ, a stary kasuje
+    dopiero, gdy nowy się udał — żeby nie zostać z pustą bazą przy błędzie BDL."""
+    import loader_lasu as LL
+    conn = db_conn()
+    try:
+        # zbierz wszystkie obszary do odświeżenia (rewiry + regiony) jako bboxy
+        obszary = []
+        for r in aktywne_rewiry(conn):
+            obszary.append(("rewir", r["id"], r.get("name"),
+                            (r["lon_min"], r["lat_min"], r["lon_max"], r["lat_max"])))
+        for reg in aktywne_regiony(conn):
+            obszary.append(("region", reg["id"], reg.get("name"),
+                            (reg["lon_min"], reg["lat_min"], reg["lon_max"], reg["lat_max"])))
+
+        if not obszary:
+            print("[odswiez] brak rewirów/regionów — nic do odświeżenia")
+            return
+
+        print(f"[odswiez] obszarów do odświeżenia: {len(obszary)}")
+
+        # 1) załaduj świeży las do tabeli tymczasowej (klon struktury forest_stands)
+        with conn.cursor() as cur:
+            cur.execute("drop table if exists forest_stands_new")
+            cur.execute("create table forest_stands_new (like forest_stands including all)")
+        conn.commit()
+
+        # przekieruj zapis loadera na tabelę tymczasową
+        suma = 0
+        for typ, oid, nazwa, bbox in obszary:
+            print(f"[odswiez] {typ} {oid} '{nazwa}' {bbox}")
+            wstawione, kolekcja = LL.zaladuj_obszar(conn, bbox, prog_min=1, tabela="forest_stands_new")
+            suma += wstawione
+            print(f"[odswiez]   -> {wstawione} drzewostanów ({kolekcja})")
+
+        if suma == 0:
+            print("[odswiez] UWAGA: nowy las pusty (0) — NIE kasuję starego, przerywam")
+            with conn.cursor() as cur:
+                cur.execute("drop table if exists forest_stands_new")
+            conn.commit()
+            return
+
+        # 2) podmiana atomowa: stary -> kosz, nowy -> forest_stands
+        with conn.cursor() as cur:
+            cur.execute("drop table if exists forest_stands_old")
+            cur.execute("alter table forest_stands rename to forest_stands_old")
+            cur.execute("alter table forest_stands_new rename to forest_stands")
+            cur.execute("drop table if exists forest_stands_old")
+        conn.commit()
+        print(f"[odswiez] GOTOWE: podmieniono las, łącznie {suma} drzewostanów")
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
     run_makro()
     run_scan()
