@@ -287,6 +287,68 @@ def wydzielenia_regionu(conn, region_id):
         return out
 
 
+def aktywne_rewiry(conn):
+    """Rewiry założone przez użytkowników (z aplikacji). Zwraca id, nazwę i bbox."""
+    with conn.cursor() as cur:
+        cur.execute("""select id, name,
+                              st_ymin(geom::box2d) as lat_min, st_ymax(geom::box2d) as lat_max,
+                              st_xmin(geom::box2d) as lon_min, st_xmax(geom::box2d) as lon_max
+                       from rewiry where active = true""")
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def rewir_ma_las(conn, rewir_id):
+    """Czy w forest_stands są drzewostany przecinające ten rewir?"""
+    with conn.cursor() as cur:
+        cur.execute("""
+            select exists(
+              select 1 from forest_stands fs
+              join rewiry r on r.id = %s
+              where st_intersects(fs.geom, r.geom)
+            )
+        """, (rewir_id,))
+        return bool(cur.fetchone()[0])
+
+
+def wydzielenia_rewiru(conn, rewir_id):
+    """Wydzielenia (D-STAN) przecinające rewir, z punktem reprezentatywnym (centroid)."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            select fs.species_cd, fs.spec_age,
+                   st_y(st_centroid(fs.geom)) as lat,
+                   st_x(st_centroid(fs.geom)) as lon
+            from forest_stands fs
+            join rewiry r on r.id = %s
+            where st_intersects(fs.geom, r.geom)
+              and coalesce(fs.area_type,'D-STAN') = 'D-STAN'
+        """, (rewir_id,))
+        out = []
+        for species_cd, spec_age, lat, lon in cur.fetchall():
+            out.append({
+                "drzewo": (species_cd or "NONE").strip().upper(),
+                "wiek": int(spec_age) if spec_age is not None else 50,
+                "lat": float(lat), "lon": float(lon),
+            })
+        return out
+
+
+def dociagnij_las_dla_rewiru(conn, rewir):
+    """WARIANT 1: jeśli rewir nie ma jeszcze lasu, dociąga go z BDL raz (auto-dyrekcja).
+    Zwraca True, jeśli po operacji rewir ma las."""
+    if rewir_ma_las(conn, rewir["id"]):
+        return True
+    print(f"[rewir {rewir['id']} '{rewir.get('name')}'] brak lasu — dociągam z BDL")
+    import loader_lasu as LL
+    bbox = (rewir["lon_min"], rewir["lat_min"], rewir["lon_max"], rewir["lat_max"])
+    wstawione, kolekcja = LL.zaladuj_obszar(conn, bbox)
+    if wstawione > 0:
+        print(f"[rewir {rewir['id']}] dociągnięto las: {wstawione} drzewostanów ({kolekcja})")
+        return True
+    print(f"[rewir {rewir['id']}] nie udało się dociągnąć lasu")
+    return False
+
+
 def nowy_przebieg(conn, kind="detail"):
     with conn.cursor() as cur:
         cur.execute("insert into scan_runs (status, kind) values ('running', %s) returning id", (kind,))
@@ -421,48 +483,57 @@ def run_makro(grid_step=0.2, horyzont=tuple(range(0, 29))):
         conn.close()
 
 
+def _policz_obszar(conn, run_id, cele, stands, obszar_id):
+    """Liczy hotspoty dla listy wydzieleń (stands) danego obszaru i zapisuje je.
+    Pogodę pobiera dla grubej siatki pokrywającej te wydzielenia."""
+    if not stands:
+        return 0
+    # siatka pogodowa ~0,1° pokrywająca wszystkie wydzielenia obszaru
+    cells = sorted({cell_key(s["lat"], s["lon"]) for s in stands})
+    weather_map = pobierz_pogode_komorek(cells)
+    upsert_weather(conn, weather_map)
+
+    hot_rows = []
+    temp_cache = {}
+    for s in stands:
+        klucz = cell_key(s["lat"], s["lon"])
+        seria = weather_map.get(klucz, {})
+        if not seria:
+            continue
+        if klucz not in temp_cache:
+            temp_cache[klucz] = _buduj_temp_ffill(seria, max(cele))
+        tff = temp_cache[klucz]
+        for target in cele:
+            for nazwa, prob, t_dev in oblicz_szanse_punkt(
+                    seria, target, s["drzewo"], s["wiek"], temp_ff=tff):
+                hot_rows.append((run_id, target, s["lat"], s["lon"],
+                                 nazwa, prob, t_dev, s["drzewo"], s["wiek"], obszar_id))
+    zapisz_hotspoty(conn, hot_rows)
+    return len(hot_rows)
+
+
 def run_scan(horyzont=tuple(range(0, 29))):
-    """SKAN SZCZEGÓŁOWY — dla zdefiniowanych regionów/rewirów: las (BDL) + pogoda
-    -> prognoza wzrostu per wydzielenie, dzień po dniu. Wynik -> hotspots."""
+    """SKAN SZCZEGÓŁOWY — dla regionów (scan_regions) ORAZ rewirów użytkowników
+    (rewiry): las (BDL) + pogoda -> prognoza wzrostu per wydzielenie, dzień po dniu.
+    WARIANT 1: jeśli rewir nie ma jeszcze lasu, agent dociąga go raz z BDL."""
     conn = db_conn()
     run_id = nowy_przebieg(conn, kind="detail")
     try:
         cele = daty_docelowe(horyzont)
+
+        # a) predefiniowane regiony (np. Słupsk z loadera)
         for reg in aktywne_regiony(conn):
-            # a) gruba siatka pogodowa ~0,1° nad bboxem regionu
-            cells = []
-            lat = round(reg["lat_min"], 1)
-            while lat <= reg["lat_max"]:
-                lon = round(reg["lon_min"], 1)
-                while lon <= reg["lon_max"]:
-                    cells.append((round(lat, 1), round(lon, 1)))
-                    lon = round(lon + 0.1, 1)
-                lat = round(lat + 0.1, 1)
-
-            # b) pogoda narastająco
-            weather_map = pobierz_pogode_komorek(cells)
-            upsert_weather(conn, weather_map)
-
-            # c) wydzielenia lasu w regionie
             stands = wydzielenia_regionu(conn, reg["id"])
+            n = _policz_obszar(conn, run_id, cele, stands, reg["id"])
+            print(f"[region {reg['id']} '{reg.get('name')}'] hotspotów: {n}")
 
-            # d) policz hotspoty per wydzielenie x data docelowa
-            hot_rows = []
-            temp_cache = {}
-            for st_ in stands:
-                klucz = cell_key(st_["lat"], st_["lon"])
-                seria = weather_map.get(klucz, {})
-                if not seria:
-                    continue
-                if klucz not in temp_cache:
-                    temp_cache[klucz] = _buduj_temp_ffill(seria, max(cele))
-                tff = temp_cache[klucz]
-                for target in cele:
-                    for nazwa, prob, t_dev in oblicz_szanse_punkt(
-                            seria, target, st_["drzewo"], st_["wiek"], temp_ff=tff):
-                        hot_rows.append((run_id, target, st_["lat"], st_["lon"],
-                                         nazwa, prob, t_dev, st_["drzewo"], st_["wiek"], reg["id"]))
-            zapisz_hotspoty(conn, hot_rows)
+        # b) rewiry użytkowników — z automatycznym dociąganiem lasu (wariant 1)
+        for rewir in aktywne_rewiry(conn):
+            if not dociagnij_las_dla_rewiru(conn, rewir):
+                continue  # nie udało się zdobyć lasu — pomijamy, spróbujemy następnej nocy
+            stands = wydzielenia_rewiru(conn, rewir["id"])
+            n = _policz_obszar(conn, run_id, cele, stands, rewir["id"])
+            print(f"[rewir {rewir['id']} '{rewir.get('name')}'] hotspotów: {n}")
 
         zamknij_przebieg(conn, run_id, "done")
         sprzataj_stare(conn, "detail")
