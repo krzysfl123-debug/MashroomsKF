@@ -414,24 +414,35 @@ def daty_docelowe(horyzont=tuple(range(0, 29))):
 # Prostokąt obejmujący Polskę (lon_min, lat_min, lon_max, lat_max).
 POLSKA_BBOX = (14.0, 49.0, 24.2, 55.0)
 
-# Maska Polski jako suma prostokątnych kafli — odcina zagranicę, morze i narożniki
-# bboxa. Zachowawcza (lepiej uciąć skrawek kraju niż wpuścić Czechy/Bałtyk).
-# Punkt jest "w Polsce", gdy wpada w którykolwiek kafel (lat_min,lat_max,lon_min,lon_max).
-MASKA_PL = [
-    (49.6, 50.8, 18.4, 19.6),
-    (49.9, 51.2, 19.6, 23.2),
-    (50.2, 52.3, 14.6, 19.6),
-    (51.0, 53.6, 14.4, 23.6),
-    (52.8, 54.5, 16.0, 23.2),
-    (53.6, 54.85, 18.5, 19.9),
+# Granica Polski jako wielokąt (lon, lat) — obrys po punktach granicznych, z lekkim
+# zapasem na zewnątrz, by nie uciąć kraju przy brzegu/granicy. Pokrywa narożniki
+# (Suwałki, Bieszczady, Hel, Kłodzko, Szczecin); odcina Bałtyk i zagranicę.
+# Sprawdzenie przynależności: ray casting (punkt_w_wielokacie).
+POLSKA_POLY = [
+    (14.12, 53.91), (14.27, 53.75), (14.20, 54.13), (15.20, 54.20),
+    (16.50, 54.58), (17.50, 54.80), (18.40, 54.84), (19.30, 54.45),
+    (19.65, 54.45), (22.80, 54.36), (23.00, 54.15), (23.55, 53.95),
+    (23.95, 52.95), (23.65, 52.32), (23.92, 52.10), (24.15, 50.85),
+    (23.70, 50.40), (22.95, 49.55), (22.55, 49.08), (21.50, 49.40),
+    (20.10, 49.18), (19.50, 49.40), (18.85, 49.50), (18.05, 49.92),
+    (17.40, 50.20), (16.60, 50.10), (16.20, 50.65), (15.00, 50.78),
+    (14.60, 51.55), (14.75, 52.07), (14.12, 52.85), (14.12, 53.91),
 ]
 
 
 def w_polsce(lat, lon):
-    for la0, la1, lo0, lo1 in MASKA_PL:
-        if la0 <= lat <= la1 and lo0 <= lon <= lo1:
-            return True
-    return False
+    """Czy punkt leży w granicach Polski (ray casting względem POLSKA_POLY)."""
+    poly = POLSKA_POLY
+    n = len(poly)
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if ((yi > lat) != (yj > lat)) and (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
 
 
 def run_makro(grid_step=0.2, horyzont=tuple(range(0, 29))):
