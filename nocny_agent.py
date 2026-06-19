@@ -33,28 +33,104 @@ from datetime import timedelta
 # =====================================================================
 PROG_OBECNOSCI = 0.35
 
-# klucz: (t_opt, t_tol, deszcz=(d_start,d_end), deszcz_min, ochlodzenie,
-#         mce=range, symbioza=[...], wiek_min, wiek_max)
+# === MODEL DWUETAPOWY (wilgotność ściółki -> ładowanie grzybni -> sygnał -> wzrost) ===
+# Parametry per gatunek:
+#   t_opt, t_tol     : dzwon temperatury owocowania (°C)
+#   wilg_prog        : próg wilgotności ściółki (0-100), powyżej którego grzybnia ŁADUJE się
+#   dni_grzybni      : ile "dobrych" dni (wilg>=prog) ładuje grzybnię do gotowości
+#   ochl_prog        : wymagany spadek śr. temperatury (°C) jako SYGNAŁ startu; 0 = nie wymaga
+#   ochlodzenie      : waga premii za ochłodzenie (jak w starym modelu, zostaje)
+#   lag              : dni od startu do widocznego/zbieralnego owocnika
+#   mce              : miesiące sezonu (range)
+#   symbioza, wiek_min, wiek_max : bramka drzewostanu (zostaje)
 GATUNKI = {
-    "Borowik szlachetny":   dict(t_opt=13.5, t_tol=4.5, deszcz=(15, 5), deszcz_min=20, ochlodzenie=0.30, mce=range(6, 12), symbioza=["SO", "ŚW", "DB", "BK"], wiek_min=40, wiek_max=999),
-    "Borowik usiatkowany":  dict(t_opt=20.0, t_tol=4.0, deszcz=(12, 3), deszcz_min=12, ochlodzenie=0.00, mce=range(5, 10), symbioza=["DB", "BK", "GB"], wiek_min=40, wiek_max=999),
-    "Borowik ceglastoporowy": dict(t_opt=16.0, t_tol=4.5, deszcz=(13, 3), deszcz_min=15, ochlodzenie=0.10, mce=range(6, 12), symbioza=["ŚW", "JD", "BK", "DB"], wiek_min=30, wiek_max=999),
-    "Podgrzybek brunatny":  dict(t_opt=13.0, t_tol=4.0, deszcz=(14, 4), deszcz_min=20, ochlodzenie=0.20, mce=range(8, 12), symbioza=["SO", "ŚW"], wiek_min=30, wiek_max=999),
-    "Podgrzybek zajączek":  dict(t_opt=16.0, t_tol=4.0, deszcz=(12, 3), deszcz_min=15, ochlodzenie=0.00, mce=range(6, 11), symbioza=["SO", "DB", "BK", "BRZ"], wiek_min=20, wiek_max=999),
-    "Maślak zwyczajny":     dict(t_opt=14.0, t_tol=4.0, deszcz=(10, 2), deszcz_min=12, ochlodzenie=0.10, mce=range(6, 12), symbioza=["SO"], wiek_min=5, wiek_max=40),
-    "Maślak sitarz":        dict(t_opt=13.0, t_tol=4.0, deszcz=(10, 2), deszcz_min=12, ochlodzenie=0.10, mce=range(7, 12), symbioza=["SO"], wiek_min=10, wiek_max=60),
-    "Koźlarz babka":        dict(t_opt=18.0, t_tol=5.0, deszcz=(10, 2), deszcz_min=12, ochlodzenie=0.00, mce=range(6, 11), symbioza=["BRZ"], wiek_min=10, wiek_max=999),
-    "Koźlarz czerwony":     dict(t_opt=18.0, t_tol=5.0, deszcz=(10, 2), deszcz_min=12, ochlodzenie=0.00, mce=range(6, 11), symbioza=["OS"], wiek_min=10, wiek_max=999),
-    "Kurka":                dict(t_opt=18.0, t_tol=4.0, deszcz=(20, 3), deszcz_min=30, ochlodzenie=0.00, mce=range(6, 11), symbioza=["SO", "ŚW", "DB", "BK", "BRZ"], wiek_min=20, wiek_max=999),
-    "Rydz":                 dict(t_opt=11.0, t_tol=4.0, deszcz=(38, 7), deszcz_min=35, ochlodzenie=0.20, mce=range(8, 12), symbioza=["SO", "ŚW"], wiek_min=10, wiek_max=45),
-    "Czubajka kania":       dict(t_opt=18.0, t_tol=4.0, deszcz=(12, 2), deszcz_min=15, ochlodzenie=0.00, mce=range(7, 11), symbioza=["ALL"], wiek_min=0, wiek_max=999),
-    "Gołąbek zielonawy":    dict(t_opt=19.0, t_tol=4.0, deszcz=(12, 3), deszcz_min=15, ochlodzenie=0.00, mce=range(6, 10), symbioza=["DB", "BK", "BRZ"], wiek_min=30, wiek_max=999),
-    "Gąska zielonka":       dict(t_opt=8.0,  t_tol=4.0, deszcz=(18, 4), deszcz_min=20, ochlodzenie=0.30, mce=range(9, 13), symbioza=["SO"], wiek_min=30, wiek_max=999),
+    "Borowik szlachetny":     dict(t_opt=16.0, t_tol=4.5, wilg_prog=55, dni_grzybni=10, ochl_prog=2.5, ochlodzenie=0.30, lag=6, mce=range(6, 12), symbioza=["SO", "ŚW", "DB", "BK"], wiek_min=40, wiek_max=999),
+    "Borowik usiatkowany":    dict(t_opt=19.0, t_tol=4.0, wilg_prog=45, dni_grzybni=5,  ochl_prog=0.0, ochlodzenie=0.00, lag=4, mce=range(5, 10), symbioza=["DB", "BK", "GB"], wiek_min=40, wiek_max=999),
+    "Borowik ceglastoporowy": dict(t_opt=17.0, t_tol=4.5, wilg_prog=50, dni_grzybni=7,  ochl_prog=1.0, ochlodzenie=0.10, lag=5, mce=range(6, 12), symbioza=["ŚW", "JD", "BK", "DB"], wiek_min=30, wiek_max=999),
+    "Podgrzybek brunatny":    dict(t_opt=15.0, t_tol=4.0, wilg_prog=50, dni_grzybni=7,  ochl_prog=1.5, ochlodzenie=0.20, lag=5, mce=range(8, 12), symbioza=["SO", "ŚW"], wiek_min=30, wiek_max=999),
+    "Podgrzybek zajączek":    dict(t_opt=16.0, t_tol=4.0, wilg_prog=45, dni_grzybni=5,  ochl_prog=0.0, ochlodzenie=0.00, lag=4, mce=range(6, 11), symbioza=["SO", "DB", "BK", "BRZ"], wiek_min=20, wiek_max=999),
+    "Maślak zwyczajny":       dict(t_opt=15.0, t_tol=4.5, wilg_prog=35, dni_grzybni=3,  ochl_prog=0.0, ochlodzenie=0.10, lag=2, mce=range(6, 12), symbioza=["SO"], wiek_min=5, wiek_max=40),
+    "Maślak sitarz":          dict(t_opt=14.0, t_tol=4.5, wilg_prog=35, dni_grzybni=3,  ochl_prog=0.0, ochlodzenie=0.10, lag=2, mce=range(7, 12), symbioza=["SO"], wiek_min=10, wiek_max=60),
+    "Koźlarz babka":          dict(t_opt=18.0, t_tol=5.0, wilg_prog=40, dni_grzybni=3,  ochl_prog=0.0, ochlodzenie=0.00, lag=2, mce=range(6, 11), symbioza=["BRZ"], wiek_min=10, wiek_max=999),
+    "Koźlarz czerwony":       dict(t_opt=18.0, t_tol=5.0, wilg_prog=40, dni_grzybni=3,  ochl_prog=0.0, ochlodzenie=0.00, lag=2, mce=range(6, 11), symbioza=["OS"], wiek_min=10, wiek_max=999),
+    "Kurka":                  dict(t_opt=17.0, t_tol=4.5, wilg_prog=50, dni_grzybni=6,  ochl_prog=0.0, ochlodzenie=0.00, lag=3, mce=range(6, 11), symbioza=["SO", "ŚW", "DB", "BK", "BRZ"], wiek_min=20, wiek_max=999),
+    "Rydz":                   dict(t_opt=12.0, t_tol=4.0, wilg_prog=50, dni_grzybni=7,  ochl_prog=2.0, ochlodzenie=0.20, lag=4, mce=range(8, 12), symbioza=["SO", "ŚW"], wiek_min=10, wiek_max=45),
+    "Czubajka kania":         dict(t_opt=18.0, t_tol=4.0, wilg_prog=40, dni_grzybni=5,  ochl_prog=0.0, ochlodzenie=0.00, lag=4, mce=range(7, 11), symbioza=["ALL"], wiek_min=0, wiek_max=999),
+    "Gołąbek zielonawy":      dict(t_opt=19.0, t_tol=4.0, wilg_prog=45, dni_grzybni=5,  ochl_prog=0.0, ochlodzenie=0.00, lag=3, mce=range(6, 10), symbioza=["DB", "BK", "BRZ"], wiek_min=30, wiek_max=999),
+    "Gąska zielonka":         dict(t_opt=8.0,  t_tol=4.0, wilg_prog=50, dni_grzybni=8,  ochl_prog=3.0, ochlodzenie=0.30, lag=5, mce=range(9, 13), symbioza=["SO"], wiek_min=30, wiek_max=999),
 }
 
 
 def _clip(x, lo, hi):
     return max(lo, min(hi, x))
+
+
+# =====================================================================
+# FIZYKA WILGOTNOŚCI ŚCIÓŁKI (model dwuetapowy)
+# =====================================================================
+def _preznosc_pary(T):
+    """Prężność pary nasyconej (hPa), wzór Magnusa. Rośnie wykładniczo z temp."""
+    return 6.112 * math.exp((17.62 * T) / (243.12 + T))
+
+
+def parowanie_dnia(t_max, t_min, rh=78.0):
+    """Dobowa zmiana wilgotności ściółki od temperatury (punkty 0-100/dzień).
+    Dodatnia = ubytek (parowanie), ujemna = przyrost (rosa nocna).
+    Oparte na niedosycie pary (VPD); ściółka tłumi parowanie o połowę (cień koron).
+    Chłodna noc (t_min<12) => kondensacja/rosa dowilża ściółkę."""
+    if t_max is None:
+        t_max = 15.0
+    if t_min is None:
+        t_min = t_max - 6.0
+    t_sr = (t_max + t_min) / 2.0
+    es = _preznosc_pary(t_sr)
+    ea = es * (rh / 100.0)
+    vpd = max(es - ea, 0.0)
+    parowanie = vpd * 0.55 * 0.5
+    if t_min < 12.0:
+        parowanie -= (12.0 - t_min) * 0.35   # rosa nocna dowilża
+    return parowanie
+
+
+def symuluj_wilgotnosc(weather, do_daty, dni_hist=45, wilg0=40.0):
+    """Liczy kroczącą wilgotność ściółki (0-100) dzień po dniu, aż do `do_daty`.
+    Deszcz DOLEWA (mm * 1.6, sufit 100), temperatura ODPAROWUje/rosa DOWILŻA.
+    Zwraca dict {date: wilgotnosc}. Start `dni_hist` dni wstecz od najwcześniejszej
+    potrzebnej daty, by zbiornik zdążył się 'rozgrzać' realnymi danymi."""
+    if not weather:
+        return {}
+    start = min(min(weather), do_daty - timedelta(days=dni_hist))
+    wilg = {}
+    poziom = wilg0
+    d = start
+    while d <= do_daty:
+        rec = weather.get(d) or {}
+        deszcz = rec.get("rain") or 0.0
+        poziom += deszcz * 1.6                       # deszcz dolewa
+        poziom -= parowanie_dnia(rec.get("t_max"), rec.get("t_min"))  # temp odparowuje/rosa dowilża
+        poziom = _clip(poziom, 0.0, 100.0)
+        wilg[d] = poziom
+        d += timedelta(days=1)
+    return wilg
+
+
+def gotowosc_grzybni(wilg_seria, target, prog, dni_potrzebne, dni_skan=30):
+    """ETAP 1: licznik gotowości grzybni 0..1 na dzień `target`.
+    Rośnie 1/dni_potrzebne w dni gdy wilgotność>=prog; opada POWOLI (1/(dni*2.5))
+    w dni suche (bezwładność). Zwraca poziom 0..1 w dniu target."""
+    d = target - timedelta(days=dni_skan)
+    poziom = 0.0
+    przyrost = 1.0 / max(dni_potrzebne, 1)
+    spadek = przyrost / 2.5                  # rozładowanie ~2.5x wolniej niż ładowanie
+    while d <= target:
+        w = wilg_seria.get(d)
+        if w is not None:
+            if w >= prog:
+                poziom = min(poziom + przyrost, 1.0)
+            else:
+                poziom = max(poziom - spadek, 0.0)
+        d += timedelta(days=1)
+    return poziom
 
 
 def skuteczna_woda(weather, target, d_start, d_end):
@@ -112,37 +188,51 @@ def _srednia_okno(temp_ff, target, a, b):
     return sum(vals) / len(vals) if vals else None
 
 
-def oblicz_szanse_punkt(weather, target, drzewo, wiek, temp_ff=None):
-    """Zwraca listę (gatunek, prob_procent, t_dev) dla punktu o danym drzewostanie.
-    Identyczna logika jak w aplikacji Streamlit (Gauss temp x nasycenie wodą
-    x sezon x bonus za ochłodzenie), z bramką symbiozy/wieku.
-    temp_ff: opcjonalny, gotowy szereg temperatury (gdy liczymy wiele dat dla tej
-    samej komórki — np. w skanie makro — budujemy go raz i podajemy tutaj)."""
+def oblicz_szanse_punkt(weather, target, drzewo, wiek, temp_ff=None, wilg_seria=None):
+    """Model DWUETAPOWY. Zwraca listę (gatunek, prob_procent, t_dev).
+    Etap 1: ładowanie grzybni (wilgotność ściółki utrzymana >= próg przez dni_grzybni).
+    Etap 2: sygnał startu (ochłodzenie dla gatunków jesiennych) + dzwon temp + sezon.
+    temp_ff, wilg_seria: gotowe szeregi (liczone raz na komórkę dla wielu dat)."""
     if temp_ff is None:
         temp_ff = _buduj_temp_ffill(weather, target)
+    if wilg_seria is None:
+        wilg_seria = symuluj_wilgotnosc(weather, target)
     t_dev = _srednia_okno(temp_ff, target, 7, 0)
     if t_dev is None:
         return []
 
+    # sygnatura ochłodzenia: różnica między oknem wcześniejszym a bieżącym
     tr = _srednia_okno(temp_ff, target, 5, 0)
     te = _srednia_okno(temp_ff, target, 16, 9)
-    chl = _clip((te - tr) / 8.0, 0.0, 1.0) if (tr is not None and te is not None) else 0.0
+    spadek_temp = (te - tr) if (tr is not None and te is not None) else 0.0
+    chl = _clip(spadek_temp / 8.0, 0.0, 1.0)
 
     miesiac = target.month
     wyniki = []
     for nazwa, p in GATUNKI.items():
-        # bramka symbiozy + wieku (identyczna jak w app.py)
+        # bramka symbiozy + wieku
         if not ("ALL" in p["symbioza"] or drzewo == "ALL"
                 or (drzewo in p["symbioza"] and p["wiek_min"] <= wiek <= p["wiek_max"])):
             continue
 
         sezon = 1.0 if miesiac in p["mce"] else (
             0.45 if (miesiac + 1) in p["mce"] or (miesiac - 1) in p["mce"] else 0.10)
-        woda = skuteczna_woda(weather, target, p["deszcz"][0], p["deszcz"][1])
-        ocena_t = math.exp(-((t_dev - p["t_opt"]) / p["t_tol"]) ** 2)
-        ocena_w = _clip(woda / p["deszcz_min"], 0.0, 1.0)
 
-        prob = min(ocena_t * ocena_w * sezon * (1.0 + p["ochlodzenie"] * chl), 1.0)
+        # ETAP 1: gotowość grzybni (0..1); poniżej 0.6 grzyb nie wystartuje
+        got = gotowosc_grzybni(wilg_seria, target, p["wilg_prog"], p["dni_grzybni"])
+        if got < 0.6:
+            continue
+        # mapujemy 0.6..1.0 -> 0..1 (jak bardzo ponad progiem gotowości)
+        ocena_grzybni = _clip((got - 0.6) / 0.4, 0.0, 1.0)
+
+        # ETAP 2: sygnał startu — gatunki jesienne wymagają ochłodzenia >= ochl_prog
+        if p["ochl_prog"] > 0.0 and spadek_temp < p["ochl_prog"]:
+            continue  # brak sygnału — jeszcze nie startuje
+
+        ocena_t = math.exp(-((t_dev - p["t_opt"]) / p["t_tol"]) ** 2)
+
+        # finalna szansa: gotowość grzybni x temperatura x sezon x premia za ochłodzenie
+        prob = min(ocena_grzybni * ocena_t * sezon * (1.0 + p["ochlodzenie"] * chl), 1.0)
         if prob >= PROG_OBECNOSCI:
             wyniki.append((nazwa, int(round(prob * 100)), round(t_dev, 1)))
 
@@ -475,10 +565,12 @@ def run_makro(grid_step=0.2, horyzont=tuple(range(0, 29))):
         for (clat, clon), seria in weather_map.items():
             if not seria:
                 continue
-            # temp_ff budujemy RAZ na komórkę (do najdalszej daty), reużywamy dla wszystkich dni
+            # temp_ff i wilgotność budujemy RAZ na komórkę, reużywamy dla wszystkich dni
             temp_ff = _buduj_temp_ffill(seria, max(cele))
+            wilg_seria = symuluj_wilgotnosc(seria, max(cele))
             for target in cele:
-                wyniki = oblicz_szanse_punkt(seria, target, "ALL", 50, temp_ff=temp_ff)
+                wyniki = oblicz_szanse_punkt(seria, target, "ALL", 50,
+                                             temp_ff=temp_ff, wilg_seria=wilg_seria)
                 if wyniki:
                     top_nazwa, top_prob, _ = wyniki[0]
                     pot_rows.append((run_id, target, clat, clon, top_prob, top_nazwa))
@@ -506,6 +598,7 @@ def _policz_obszar(conn, run_id, cele, stands, obszar_id):
 
     hot_rows = []
     temp_cache = {}
+    wilg_cache = {}
     for s in stands:
         klucz = cell_key(s["lat"], s["lon"])
         seria = weather_map.get(klucz, {})
@@ -513,10 +606,12 @@ def _policz_obszar(conn, run_id, cele, stands, obszar_id):
             continue
         if klucz not in temp_cache:
             temp_cache[klucz] = _buduj_temp_ffill(seria, max(cele))
+            wilg_cache[klucz] = symuluj_wilgotnosc(seria, max(cele))
         tff = temp_cache[klucz]
+        wsr = wilg_cache[klucz]
         for target in cele:
             for nazwa, prob, t_dev in oblicz_szanse_punkt(
-                    seria, target, s["drzewo"], s["wiek"], temp_ff=tff):
+                    seria, target, s["drzewo"], s["wiek"], temp_ff=tff, wilg_seria=wsr):
                 hot_rows.append((run_id, target, s["lat"], s["lon"],
                                  nazwa, prob, t_dev, s["drzewo"], s["wiek"], obszar_id))
     zapisz_hotspoty(conn, hot_rows)
