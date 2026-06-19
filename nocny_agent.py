@@ -633,18 +633,27 @@ def run_scan(horyzont=tuple(range(0, 29))):
             n = _policz_obszar(conn, run_id, cele, stands, reg["id"])
             print(f"[region {reg['id']} '{reg.get('name')}'] hotspotów: {n}")
 
-        # b) rewiry użytkowników — z automatycznym dociąganiem lasu (wariant 1)
+        # b) rewiry użytkowników — z automatycznym dociąganiem lasu (wariant 1).
+        #    Każdy rewir w osobnym 'try': błąd jednego nie wywraca całego skanu.
         for rewir in aktywne_rewiry(conn):
-            if not dociagnij_las_dla_rewiru(conn, rewir):
-                continue  # nie udało się zdobyć lasu — pomijamy, spróbujemy następnej nocy
-            stands = wydzielenia_rewiru(conn, rewir["id"])
-            n = _policz_obszar(conn, run_id, cele, stands, rewir["id"])
-            print(f"[rewir {rewir['id']} '{rewir.get('name')}'] hotspotów: {n}")
+            try:
+                if not dociagnij_las_dla_rewiru(conn, rewir):
+                    continue  # nie udało się zdobyć lasu — pomijamy
+                stands = wydzielenia_rewiru(conn, rewir["id"])
+                n = _policz_obszar(conn, run_id, cele, stands, rewir["id"])
+                print(f"[rewir {rewir['id']} '{rewir.get('name')}'] hotspotów: {n}")
+            except Exception as e:
+                conn.rollback()  # odtruwa transakcję, by można było liczyć dalej
+                print(f"[rewir {rewir['id']} '{rewir.get('name')}'] POMINIĘTY — błąd: {type(e).__name__}: {str(e)[:200]}")
 
         zamknij_przebieg(conn, run_id, "done")
         sprzataj_stare(conn, "detail")
     except Exception as e:
-        zamknij_przebieg(conn, run_id, "failed", str(e)[:500])
+        conn.rollback()  # odtruwa transakcję przed zapisem statusu 'failed'
+        try:
+            zamknij_przebieg(conn, run_id, "failed", str(e)[:500])
+        except Exception:
+            pass
         raise
     finally:
         conn.close()
