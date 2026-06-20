@@ -73,22 +73,23 @@ def _preznosc_pary(T):
     return 6.112 * math.exp((17.62 * T) / (243.12 + T))
 
 
-def parowanie_dnia(t_max, t_min, rh=78.0):
-    """Dobowa zmiana wilgotności ściółki od temperatury (punkty 0-100/dzień).
+def parowanie_dnia(t_max, t_min, rh=68.0):
+    """Dobowa zmiana wilgotności ściółki od temperatury (punkty 0-100/dobę).
     Dodatnia = ubytek (parowanie), ujemna = przyrost (rosa nocna).
-    Oparte na niedosycie pary (VPD); ściółka tłumi parowanie o połowę (cień koron).
-    Chłodna noc (t_min<12) => kondensacja/rosa dowilża ściółkę."""
+    Kalibracja: w upale ~29°C odparowuje ~10 pkt/dobę => pełna ściółka (100%)
+    schodzi poniżej progu startu (~60%) w ok. 4 dni (zgodnie z obserwacją terenową).
+    Chłodna noc (t_min<10) => kondensacja/rosa dowilża."""
     if t_max is None:
-        t_max = 15.0
+        t_max = 18.0
     if t_min is None:
-        t_min = t_max - 6.0
+        t_min = t_max - 7.0
     t_sr = (t_max + t_min) / 2.0
     es = _preznosc_pary(t_sr)
     ea = es * (rh / 100.0)
     vpd = max(es - ea, 0.0)
-    parowanie = vpd * 0.55 * 0.5
-    if t_min < 12.0:
-        parowanie -= (12.0 - t_min) * 0.35   # rosa nocna dowilża
+    parowanie = vpd * 1.15
+    if t_min < 10.0:
+        parowanie -= (10.0 - t_min) * 0.30   # rosa nocna dowilża (realnie chłodne noce)
     return parowanie
 
 
@@ -106,8 +107,13 @@ def symuluj_wilgotnosc(weather, do_daty, dni_hist=45, wilg0=40.0):
     while d <= do_daty:
         rec = weather.get(d) or {}
         deszcz = rec.get("rain") or 0.0
-        poziom += deszcz * 1.6                       # deszcz dolewa
-        poziom -= parowanie_dnia(rec.get("t_max"), rec.get("t_min"))  # temp odparowuje/rosa dowilża
+        # deszcz dolewa do ściółki ze słabnącą wydajnością: do 20 mm/dobę nasącza
+        # mocno (~2.2 pkt/mm), nadmiar (ulewa) w dużej części spływa/przesiąka głębiej.
+        if deszcz <= 20:
+            poziom += deszcz * 2.2
+        else:
+            poziom += 20 * 2.2 + (deszcz - 20) * 2.2 * 0.4
+        poziom -= parowanie_dnia(rec.get("t_max"), rec.get("t_min"))
         poziom = _clip(poziom, 0.0, 100.0)
         wilg[d] = poziom
         d += timedelta(days=1)
