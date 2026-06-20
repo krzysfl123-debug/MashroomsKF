@@ -600,11 +600,16 @@ def run_makro(grid_step=0.2, horyzont=tuple(range(0, 29))):
         conn.close()
 
 
-def _policz_obszar(conn, run_id, cele, stands, obszar_id):
+def _policz_obszar(conn, run_id, cele, stands, obszar_id, czy_region=True):
     """Liczy hotspoty dla listy wydzieleń (stands) danego obszaru i zapisuje je.
-    Pogodę pobiera dla grubej siatki pokrywającej te wydzielenia."""
+    Pogodę pobiera dla grubej siatki pokrywającej te wydzielenia.
+    czy_region: True dla regionów (scan_regions) — obszar_id idzie do region_id.
+                False dla rewirów — region_id=NULL (kolumna ma klucz obcy do
+                scan_regions, więc id rewiru by je naruszyło). Hotspot rewiru
+                aplikacja i tak znajdzie po lat/lon (bbox), nie po region_id."""
     if not stands:
         return 0
+    region_id = obszar_id if czy_region else None
     # siatka pogodowa ~0,1° pokrywająca wszystkie wydzielenia obszaru
     cells = sorted({cell_key(s["lat"], s["lon"]) for s in stands})
     weather_map = pobierz_pogode_komorek(cells)
@@ -629,7 +634,7 @@ def _policz_obszar(conn, run_id, cele, stands, obszar_id):
                     seria, target, s["drzewo"], s["wiek"], temp_ff=tff, wilg_seria=wsr,
                     got_cache=got_cache, cache_klucz=klucz):
                 hot_rows.append((run_id, target, s["lat"], s["lon"],
-                                 nazwa, prob, t_dev, s["drzewo"], s["wiek"], obszar_id))
+                                 nazwa, prob, t_dev, s["drzewo"], s["wiek"], region_id))
     zapisz_hotspoty(conn, hot_rows)
     return len(hot_rows)
 
@@ -656,7 +661,7 @@ def run_scan(horyzont=tuple(range(0, 29))):
                 if not dociagnij_las_dla_rewiru(conn, rewir):
                     continue  # nie udało się zdobyć lasu — pomijamy
                 stands = wydzielenia_rewiru(conn, rewir["id"])
-                n = _policz_obszar(conn, run_id, cele, stands, rewir["id"])
+                n = _policz_obszar(conn, run_id, cele, stands, rewir["id"], czy_region=False)
                 print(f"[rewir {rewir['id']} '{rewir.get('name')}'] hotspotów: {n}")
             except Exception as e:
                 conn.rollback()  # odtruwa transakcję, by można było liczyć dalej
