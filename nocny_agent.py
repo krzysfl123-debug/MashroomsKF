@@ -188,11 +188,14 @@ def _srednia_okno(temp_ff, target, a, b):
     return sum(vals) / len(vals) if vals else None
 
 
-def oblicz_szanse_punkt(weather, target, drzewo, wiek, temp_ff=None, wilg_seria=None):
+def oblicz_szanse_punkt(weather, target, drzewo, wiek, temp_ff=None, wilg_seria=None,
+                        got_cache=None, cache_klucz=None):
     """Model DWUETAPOWY. Zwraca listę (gatunek, prob_procent, t_dev).
     Etap 1: ładowanie grzybni (wilgotność ściółki utrzymana >= próg przez dni_grzybni).
     Etap 2: sygnał startu (ochłodzenie dla gatunków jesiennych) + dzwon temp + sezon.
-    temp_ff, wilg_seria: gotowe szeregi (liczone raz na komórkę dla wielu dat)."""
+    temp_ff, wilg_seria: gotowe szeregi (liczone raz na komórkę dla wielu dat).
+    got_cache, cache_klucz: opcjonalny cache gotowości grzybni — gotowość zależy tylko
+    od komórki pogodowej (nie od wydzielenia), więc liczymy ją raz i reużywamy."""
     if temp_ff is None:
         temp_ff = _buduj_temp_ffill(weather, target)
     if wilg_seria is None:
@@ -218,20 +221,25 @@ def oblicz_szanse_punkt(weather, target, drzewo, wiek, temp_ff=None, wilg_seria=
         sezon = 1.0 if miesiac in p["mce"] else (
             0.45 if (miesiac + 1) in p["mce"] or (miesiac - 1) in p["mce"] else 0.10)
 
-        # ETAP 1: gotowość grzybni (0..1); poniżej 0.6 grzyb nie wystartuje
-        got = gotowosc_grzybni(wilg_seria, target, p["wilg_prog"], p["dni_grzybni"])
+        # ETAP 1: gotowość grzybni (0..1) — zależy tylko od komórki+gatunku+daty,
+        # więc cachujemy (te same wydzielenia w komórce dają tę samą gotowość)
+        if got_cache is not None and cache_klucz is not None:
+            gk = (cache_klucz, nazwa, target)
+            got = got_cache.get(gk)
+            if got is None:
+                got = gotowosc_grzybni(wilg_seria, target, p["wilg_prog"], p["dni_grzybni"])
+                got_cache[gk] = got
+        else:
+            got = gotowosc_grzybni(wilg_seria, target, p["wilg_prog"], p["dni_grzybni"])
         if got < 0.6:
             continue
-        # mapujemy 0.6..1.0 -> 0..1 (jak bardzo ponad progiem gotowości)
         ocena_grzybni = _clip((got - 0.6) / 0.4, 0.0, 1.0)
 
         # ETAP 2: sygnał startu — gatunki jesienne wymagają ochłodzenia >= ochl_prog
         if p["ochl_prog"] > 0.0 and spadek_temp < p["ochl_prog"]:
-            continue  # brak sygnału — jeszcze nie startuje
+            continue
 
         ocena_t = math.exp(-((t_dev - p["t_opt"]) / p["t_tol"]) ** 2)
-
-        # finalna szansa: gotowość grzybni x temperatura x sezon x premia za ochłodzenie
         prob = min(ocena_grzybni * ocena_t * sezon * (1.0 + p["ochlodzenie"] * chl), 1.0)
         if prob >= PROG_OBECNOSCI:
             wyniki.append((nazwa, int(round(prob * 100)), round(t_dev, 1)))
@@ -599,6 +607,7 @@ def _policz_obszar(conn, run_id, cele, stands, obszar_id):
     hot_rows = []
     temp_cache = {}
     wilg_cache = {}
+    got_cache = {}   # (klucz_komorki, gatunek, data) -> gotowosc grzybni (liczone raz)
     for s in stands:
         klucz = cell_key(s["lat"], s["lon"])
         seria = weather_map.get(klucz, {})
@@ -611,7 +620,8 @@ def _policz_obszar(conn, run_id, cele, stands, obszar_id):
         wsr = wilg_cache[klucz]
         for target in cele:
             for nazwa, prob, t_dev in oblicz_szanse_punkt(
-                    seria, target, s["drzewo"], s["wiek"], temp_ff=tff, wilg_seria=wsr):
+                    seria, target, s["drzewo"], s["wiek"], temp_ff=tff, wilg_seria=wsr,
+                    got_cache=got_cache, cache_klucz=klucz):
                 hot_rows.append((run_id, target, s["lat"], s["lon"],
                                  nazwa, prob, t_dev, s["drzewo"], s["wiek"], obszar_id))
     zapisz_hotspoty(conn, hot_rows)
