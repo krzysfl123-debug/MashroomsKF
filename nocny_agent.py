@@ -76,9 +76,12 @@ def _preznosc_pary(T):
 def parowanie_dnia(t_max, t_min, rh=68.0):
     """Dobowa zmiana wilgotności ściółki od temperatury (punkty 0-100/dobę).
     Dodatnia = ubytek (parowanie), ujemna = przyrost (rosa nocna).
-    Kalibracja: w upale ~29°C odparowuje ~10 pkt/dobę => pełna ściółka (100%)
-    schodzi poniżej progu startu (~60%) w ok. 4 dni (zgodnie z obserwacją terenową).
-    Chłodna noc (t_min<10) => kondensacja/rosa dowilża."""
+    Oparte na niedosycie pary (VPD, rośnie wykładniczo z temp — zgodnie z literaturą
+    o wysychaniu ściółki/paliwa leśnego). Dodatkowe przyspieszenie >18°C oddaje
+    nagrzewanie ściółki słońcem w upale. KALIBRACJA na obserwacji terenowej:
+    ~30°C => ściółka schodzi <60% (próg startu) w ~2,5 dnia, do stanu 'sucha jak
+    pieprz' (~25%) w ~4-5 dni. Poniżej 15°C parowanie wolne (las trzyma wilgoć
+    1,5-2 tyg.). Chłodna noc (t_min<10) dowilża rosą."""
     if t_max is None:
         t_max = 18.0
     if t_min is None:
@@ -87,9 +90,11 @@ def parowanie_dnia(t_max, t_min, rh=68.0):
     es = _preznosc_pary(t_sr)
     ea = es * (rh / 100.0)
     vpd = max(es - ea, 0.0)
-    parowanie = vpd * 1.15
+    parowanie = vpd * 1.5
+    if t_sr > 18.0:
+        parowanie *= 1.0 + (t_sr - 18.0) * 0.04   # upał: słońce dodatkowo grzeje ściółkę
     if t_min < 10.0:
-        parowanie -= (10.0 - t_min) * 0.30   # rosa nocna dowilża (realnie chłodne noce)
+        parowanie -= (10.0 - t_min) * 0.30        # rosa nocna dowilża
     return parowanie
 
 
