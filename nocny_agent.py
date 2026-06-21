@@ -532,7 +532,7 @@ def zapisz_hotspoty(conn, rows):
         execute_values(cur, """
             insert into hotspots
               (run_id, valid_for_date, lat, lon, species, prob, t_dev, drzewo, wiek, region_id,
-               wilg, deszcz7)
+               wilg, deszcz7, tryb)
             values %s
         """, rows)
     conn.commit()
@@ -675,26 +675,41 @@ def _policz_obszar(conn, run_id, cele, stands, obszar_id, czy_region=True):
               f"{len(nadal_brak)} nadal brak")
 
     hot_rows = []
-    temp_cache = {}
-    wilg_cache = {}
-    got_cache = {}   # (klucz_komorki, gatunek, data) -> gotowosc grzybni (liczone raz)
-    for s in stands:
-        klucz = cell_key(s["lat"], s["lon"])
-        seria = weather_map.get(klucz, {})
-        if not seria:
-            continue
-        if klucz not in temp_cache:
-            temp_cache[klucz] = _buduj_temp_ffill(seria, max(cele))
-            wilg_cache[klucz] = symuluj_wilgotnosc(seria, max(cele))
-        tff = temp_cache[klucz]
-        wsr = wilg_cache[klucz]
-        for target in cele:
-            for nazwa, prob, t_dev, wilg, deszcz7 in oblicz_szanse_punkt(
-                    seria, target, s["drzewo"], s["wiek"], temp_ff=tff, wilg_seria=wsr,
-                    got_cache=got_cache, cache_klucz=klucz):
-                hot_rows.append((run_id, target, s["lat"], s["lon"],
-                                 nazwa, prob, t_dev, s["drzewo"], s["wiek"], region_id,
-                                 wilg, deszcz7))
+    dzis = dt.date.today()
+    # Liczymy DWA warianty:
+    #  - 'historia': model widzi tylko dane archiwalne (do dziś) — pewna prognoza,
+    #    suwak sięga ~14 dni (to co dojrzeje z już zgromadzonej wilgoci).
+    #  - 'forecast': model widzi archiwum + prognozę pogody — sięga dalej i celniej
+    #    (uwzględnia nadchodzące przesuszenia).
+    for tryb in ("historia", "forecast"):
+        if tryb == "historia":
+            # odfiltruj prognozę: zostaw tylko dni do dziś (pogoda archiwalna)
+            wmap = {}
+            for k, seria in weather_map.items():
+                wmap[k] = {d: r for d, r in seria.items() if d <= dzis}
+            cele_tryb = [t for t in cele if t <= dzis + timedelta(days=14)]
+        else:
+            wmap = weather_map
+            cele_tryb = cele
+
+        temp_cache, wilg_cache, got_cache = {}, {}, {}
+        for s in stands:
+            klucz = cell_key(s["lat"], s["lon"])
+            seria = wmap.get(klucz, {})
+            if not seria:
+                continue
+            if klucz not in temp_cache:
+                temp_cache[klucz] = _buduj_temp_ffill(seria, max(cele_tryb))
+                wilg_cache[klucz] = symuluj_wilgotnosc(seria, max(cele_tryb))
+            tff = temp_cache[klucz]
+            wsr = wilg_cache[klucz]
+            for target in cele_tryb:
+                for nazwa, prob, t_dev, wilg, deszcz7 in oblicz_szanse_punkt(
+                        seria, target, s["drzewo"], s["wiek"], temp_ff=tff, wilg_seria=wsr,
+                        got_cache=got_cache, cache_klucz=klucz):
+                    hot_rows.append((run_id, target, s["lat"], s["lon"],
+                                     nazwa, prob, t_dev, s["drzewo"], s["wiek"], region_id,
+                                     wilg, deszcz7, tryb))
     zapisz_hotspoty(conn, hot_rows)
     return len(hot_rows)
 
