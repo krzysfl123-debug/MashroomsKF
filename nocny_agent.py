@@ -339,6 +339,33 @@ def db_conn():
     return psycopg2.connect(url)
 
 
+def wczytaj_pogode_z_bazy(conn, cells, dni_wstecz=45, dni_wprzod=29):
+    """Odczyt pogody z bazy (weather_daily) dla podanych komórek — fallback,
+    gdy świeże pobranie z Open-Meteo zawiodło dla części komórek. Zwraca
+    {(clat,clon): {date: {'t_max','t_min','rain','kind'}}}. Forecast ma
+    pierwszeństwo nad archiwum dla pokrywających się dni (świeższy)."""
+    if not cells:
+        return {}
+    dzis = dt.date.today()
+    d_od = (dzis - timedelta(days=dni_wstecz))
+    d_do = (dzis + timedelta(days=dni_wprzod))
+    out = {}
+    with conn.cursor() as cur:
+        # archive najpierw, potem forecast nadpisze pokrywające się dni
+        for kind in ("archive", "forecast"):
+            cur.execute("""
+                select cell_lat, cell_lon, obs_date, t_max, t_min, rain_sum
+                from weather_daily
+                where kind=%s and obs_date between %s and %s
+                  and (cell_lat, cell_lon) in %s
+            """, (kind, d_od, d_do, tuple((float(a), float(b)) for a, b in cells)))
+            for clat, clon, od, tx, tn, rain in cur.fetchall():
+                k = (round(float(clat), 1), round(float(clon), 1))
+                out.setdefault(k, {})[od] = {
+                    "t_max": tx, "t_min": tn, "rain": rain or 0.0, "kind": kind}
+    return out
+
+
 def upsert_weather(conn, weather_map):
     """Zapis pogody narastająco — upsert po (cell_lat,cell_lon,obs_date,kind)."""
     rows = []
@@ -614,6 +641,20 @@ def _policz_obszar(conn, run_id, cele, stands, obszar_id, czy_region=True):
     cells = sorted({cell_key(s["lat"], s["lon"]) for s in stands})
     weather_map = pobierz_pogode_komorek(cells)
     upsert_weather(conn, weather_map)
+
+    # FALLBACK: komórki, dla których świeże pobranie zawiodło (pusta seria),
+    # uzupełniamy pogodą z bazy (z wcześniejszych przebiegów). Bez tego rewir
+    # dostaje 0 hotspotów po cichu, gdy Open-Meteo nie odda danych dla batcha.
+    brakujace = [c for c in cells if not weather_map.get(c)]
+    if brakujace:
+        z_bazy = wczytaj_pogode_z_bazy(conn, brakujace)
+        for c in brakujace:
+            if z_bazy.get(c):
+                weather_map[c] = z_bazy[c]
+        nadal_brak = [c for c in brakujace if not weather_map.get(c)]
+        print(f"    [pogoda] {len(brakujace)} komórek bez świeżych danych, "
+              f"{len(brakujace) - len(nadal_brak)} uzupełniono z bazy, "
+              f"{len(nadal_brak)} nadal brak")
 
     hot_rows = []
     temp_cache = {}
