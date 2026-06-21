@@ -250,8 +250,20 @@ def oblicz_szanse_punkt(weather, target, drzewo, wiek, temp_ff=None, wilg_seria=
         if prob >= PROG_OBECNOSCI:
             wyniki.append((nazwa, int(round(prob * 100)), round(t_dev, 1)))
 
+    # wilgotność ściółki w dniu target oraz suma deszczu z ostatnich 7 dni
+    # (te same dla wszystkich gatunków w punkcie — dokładamy do każdego wyniku)
+    wilg_dnia = wilg_seria.get(target)
+    wilg_val = round(wilg_dnia, 1) if wilg_dnia is not None else None
+    deszcz7 = 0.0
+    for i in range(7):
+        rec = weather.get(target - timedelta(days=i))
+        if rec:
+            deszcz7 += rec.get("rain") or 0.0
+    deszcz7 = round(deszcz7, 1)
+
     wyniki.sort(key=lambda x: x[1], reverse=True)
-    return wyniki
+    # dołączamy wilgotność i deszcz do każdej krotki: (nazwa, prob, t_dev, wilg, deszcz7)
+    return [(n, pr, td, wilg_val, deszcz7) for (n, pr, td) in wyniki]
 
 
 # =====================================================================
@@ -514,7 +526,8 @@ def zapisz_hotspoty(conn, rows):
     with conn.cursor() as cur:
         execute_values(cur, """
             insert into hotspots
-              (run_id, valid_for_date, lat, lon, species, prob, t_dev, drzewo, wiek, region_id)
+              (run_id, valid_for_date, lat, lon, species, prob, t_dev, drzewo, wiek, region_id,
+               wilg, deszcz7)
             values %s
         """, rows)
     conn.commit()
@@ -613,7 +626,7 @@ def run_makro(grid_step=0.2, horyzont=tuple(range(0, 29))):
                 wyniki = oblicz_szanse_punkt(seria, target, "ALL", 50,
                                              temp_ff=temp_ff, wilg_seria=wilg_seria)
                 if wyniki:
-                    top_nazwa, top_prob, _ = wyniki[0]
+                    top_nazwa, top_prob = wyniki[0][0], wyniki[0][1]
                     pot_rows.append((run_id, target, clat, clon, top_prob, top_nazwa))
         zapisz_potential(conn, pot_rows)
         print(f"[makro] zapisano {len(pot_rows)} rekordów potencjału")
@@ -671,11 +684,12 @@ def _policz_obszar(conn, run_id, cele, stands, obszar_id, czy_region=True):
         tff = temp_cache[klucz]
         wsr = wilg_cache[klucz]
         for target in cele:
-            for nazwa, prob, t_dev in oblicz_szanse_punkt(
+            for nazwa, prob, t_dev, wilg, deszcz7 in oblicz_szanse_punkt(
                     seria, target, s["drzewo"], s["wiek"], temp_ff=tff, wilg_seria=wsr,
                     got_cache=got_cache, cache_klucz=klucz):
                 hot_rows.append((run_id, target, s["lat"], s["lon"],
-                                 nazwa, prob, t_dev, s["drzewo"], s["wiek"], region_id))
+                                 nazwa, prob, t_dev, s["drzewo"], s["wiek"], region_id,
+                                 wilg, deszcz7))
     zapisz_hotspoty(conn, hot_rows)
     return len(hot_rows)
 
