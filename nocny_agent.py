@@ -100,26 +100,47 @@ def parowanie_dnia(t_max, t_min, rh=68.0):
 
 def symuluj_wilgotnosc(weather, do_daty, dni_hist=45, wilg0=40.0):
     """Liczy kroczącą wilgotność ściółki (0-100) dzień po dniu, aż do `do_daty`.
-    Deszcz DOLEWA (mm * 1.6, sufit 100), temperatura ODPAROWUje/rosa DOWILŻA.
-    Zwraca dict {date: wilgotnosc}. Start `dni_hist` dni wstecz od najwcześniejszej
-    potrzebnej daty, by zbiornik zdążył się 'rozgrzać' realnymi danymi."""
+    Deszcz DOLEWA (do 20 mm/dobę ~2.2 pkt/mm, nadmiar słabiej), temperatura
+    ODPAROWUje/rosa DOWILŻA. Zwraca dict {date: wilgotnosc}. Start `dni_hist` dni
+    wstecz od najwcześniejszej potrzebnej daty, by zbiornik 'rozgrzał się' realnymi danymi.
+
+    PRÓG ROZMOKNIĘCIA: po suszy zhydrofobizowana ściółka najpierw spływa/odparowuje,
+    zanim zacznie magazynować. Ukryty bufor 'namoku' (NAMOK_POJ mm): gdy ściółka sucha,
+    deszcz najpierw napełnia bufor (~1,5 dnia typowego deszczu), a dopiero nadmiar ponad
+    bufor podnosi właściwą wilgotność. Bufor (powierzchnia) wysycha TYLKO w dni bez deszczu,
+    tym szybciej im goręcej. Gdy ściółka już wilgotna — bufor pełny, deszcz idzie prosto
+    do magazynu (zero kary)."""
+    NAMOK_POJ = 12.0          # mm — pojemność bufora rozmoknięcia (~1,5 dnia deszczu); TU się reguluje
     if not weather:
         return {}
     start = min(min(weather), do_daty - timedelta(days=dni_hist))
     wilg = {}
     poziom = wilg0
+    namok = NAMOK_POJ * _clip(poziom / 30.0, 0.0, 1.0)   # wilgotna ściółka = bufor już pełny
     d = start
     while d <= do_daty:
         rec = weather.get(d) or {}
         deszcz = rec.get("rain") or 0.0
-        # deszcz dolewa do ściółki ze słabnącą wydajnością: do 20 mm/dobę nasącza
-        # mocno (~2.2 pkt/mm), nadmiar (ulewa) w dużej części spływa/przesiąka głębiej.
-        if deszcz <= 20:
-            poziom += deszcz * 2.2
+        par = parowanie_dnia(rec.get("t_max"), rec.get("t_min"))
+        # 1) deszcz najpierw rozmacza powierzchnię (bufor), nadmiar -> magazyn
+        if deszcz > 0:
+            brak = max(NAMOK_POJ - namok, 0.0)
+            do_bufora = min(deszcz, brak)
+            namok += do_bufora
+            deszcz_do_sciolki = deszcz - do_bufora
         else:
-            poziom += 20 * 2.2 + (deszcz - 20) * 2.2 * 0.4
-        poziom -= parowanie_dnia(rec.get("t_max"), rec.get("t_min"))
+            deszcz_do_sciolki = 0.0
+        # 2) magazyn: do 20 mm/dobę nasącza mocno, nadmiar (ulewa) słabiej
+        if deszcz_do_sciolki <= 20:
+            poziom += deszcz_do_sciolki * 2.2
+        else:
+            poziom += 20 * 2.2 + (deszcz_do_sciolki - 20) * 2.2 * 0.4
+        poziom -= par
         poziom = _clip(poziom, 0.0, 100.0)
+        # 3) bufor (wierzchnia warstwa) wysycha tylko w dni bez deszczu
+        if deszcz < 1.0:
+            namok -= par
+        namok = _clip(namok, 0.0, NAMOK_POJ)
         wilg[d] = poziom
         d += timedelta(days=1)
     return wilg
