@@ -470,9 +470,8 @@ def aktywne_rewiry(conn):
 def rewir_ma_las(conn, rewir_id):
     """Czy rewir ma wystarczająco gęsty las (>= MIN_GESTOSC wydz/km²)?
     Próg gęstości zamiast zwykłego exists() — zapobiega sytuacji gdy loader
-    zaciągnął tylko skrawek obszaru (np. Stara Rzeka: 19 wydz na 100 km²).
-    Poniżej progu agent traktuje rewir jako 'bez lasu' i ładuje BDL od nowa."""
-    MIN_GESTOSC = 2.0   # wydzieleń/km² — poniżej = niekompletne, przeładuj
+    zaciągnął tylko skrawek obszaru (np. Stara Rzeka: 19 wydz na 100 km²)."""
+    MIN_GESTOSC = 2.0
     with conn.cursor() as cur:
         cur.execute("""
             select count(fs.id),
