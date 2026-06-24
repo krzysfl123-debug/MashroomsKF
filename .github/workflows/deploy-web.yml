@@ -1,0 +1,30 @@
+name: Deploy Flutter Web
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # pozwala odpalić ręcznie z zakładki Actions
+
+permissions:
+  contents: write           # żeby móc pisać do gałęzi gh-pages
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Flutter setup
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Build web
+        run: flutter build web --release --base-href /MashroomsKF/
+
+      - name: Deploy na gh-pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
