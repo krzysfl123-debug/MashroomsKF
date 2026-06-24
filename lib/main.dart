@@ -6,6 +6,8 @@ import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
+import 'package:geolocator/geolocator.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'atlas.dart';
 
 // =====================================================================
@@ -364,6 +366,41 @@ class _MapaEkranState extends State<MapaEkran> {
       j = i;
     }
     return inside;
+  }
+
+  Future<void> _gpsLocate() async {
+    if (kIsWeb) {
+      // Web: używamy wbudowanego API przeglądarki przez geolocator web
+      try {
+        final pos = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high);
+        _map.move(LatLng(pos.latitude, pos.longitude), 14);
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Błąd lokalizacji: $e')));
+      }
+      return;
+    }
+    // Android / iOS: sprawdź uprawnienia
+    LocationPermission perm = await Geolocator.checkPermission();
+    if (perm == LocationPermission.denied) {
+      perm = await Geolocator.requestPermission();
+    }
+    if (perm == LocationPermission.denied ||
+        perm == LocationPermission.deniedForever) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Brak dostępu do lokalizacji. Odblokuj w ustawieniach.')));
+      return;
+    }
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high);
+      _map.move(LatLng(pos.latitude, pos.longitude), 14);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Błąd GPS: $e')));
+    }
   }
 
   Future<void> _wpisKoordynaty() async {
@@ -867,31 +904,54 @@ class _MapaEkranState extends State<MapaEkran> {
             child: const Icon(Icons.remove),
           ),
           const SizedBox(height: 16),
-          // TRYB DODAWANIA REWIRU
-          FloatingActionButton.extended(
-            heroTag: 'rewir',
-            backgroundColor: _trybRewiru ? const Color(0xFFD32F2F) : Colors.grey.shade300,
-            foregroundColor: _trybRewiru ? Colors.white : Colors.black87,
-            onPressed: () => setState(() => _trybRewiru = !_trybRewiru),
-            icon: Icon(_trybRewiru ? Icons.close : Icons.add_location_alt),
-            label: Text(_trybRewiru ? 'Anuluj' : 'Dodaj rewir'),
+          // TRYB DODAWANIA REWIRU + koordynaty obok w jednym rzędzie
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FloatingActionButton.extended(
+                heroTag: 'rewir',
+                backgroundColor: _trybRewiru
+                    ? const Color(0xFFD32F2F)
+                    : Colors.grey.shade300,
+                foregroundColor: _trybRewiru ? Colors.white : Colors.black87,
+                onPressed: () => setState(() => _trybRewiru = !_trybRewiru),
+                icon: Icon(_trybRewiru ? Icons.close : Icons.add_location_alt),
+                label: Text(_trybRewiru ? 'Anuluj' : 'Dodaj rewir'),
+              ),
+              const SizedBox(width: 8),
+              // Przycisk współrzędnych — zawsze widoczny obok "Dodaj rewir"
+              FloatingActionButton.small(
+                heroTag: 'rewir_koord',
+                backgroundColor: Colors.white,
+                foregroundColor: const Color(0xFF2E7D32),
+                tooltip: 'Dodaj rewir przez współrzędne',
+                onPressed: _trybRewiru ? null : _wpisKoordynaty,
+                child: const Icon(Icons.pin_drop),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
-          FloatingActionButton.small(
-            heroTag: 'zarzadzaj',
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.black87,
-            onPressed: _panelRewirow,
-            child: const Icon(Icons.list),
-          ),
-          const SizedBox(height: 4),
-          FloatingActionButton.small(
-            heroTag: 'rewir_koord',
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.black87,
-            tooltip: 'Dodaj rewir przez współrzędne',
-            onPressed: _wpisKoordynaty,
-            child: const Icon(Icons.my_location),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // GPS — wyśrodkuj mapę na mojej pozycji
+              FloatingActionButton.small(
+                heroTag: 'gps',
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.black87,
+                tooltip: 'Moja pozycja',
+                onPressed: _gpsLocate,
+                child: const Icon(Icons.my_location),
+              ),
+              const SizedBox(width: 8),
+              FloatingActionButton.small(
+                heroTag: 'zarzadzaj',
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.black87,
+                onPressed: _panelRewirow,
+                child: const Icon(Icons.list),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
           FloatingActionButton.extended(
