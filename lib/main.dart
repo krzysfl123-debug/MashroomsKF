@@ -6,8 +6,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
-import 'package:geolocator/geolocator.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'gps_service.dart';
 import 'atlas.dart';
 
 // =====================================================================
@@ -369,34 +368,15 @@ class _MapaEkranState extends State<MapaEkran> {
   }
 
   Future<void> _gpsLocate() async {
-    if (kIsWeb) {
-      // Web: używamy wbudowanego API przeglądarki przez geolocator web
-      try {
-        final pos = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.high);
-        _map.move(LatLng(pos.latitude, pos.longitude), 14);
-      } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Błąd lokalizacji: $e')));
-      }
-      return;
-    }
-    // Android / iOS: sprawdź uprawnienia
-    LocationPermission perm = await Geolocator.checkPermission();
-    if (perm == LocationPermission.denied) {
-      perm = await Geolocator.requestPermission();
-    }
-    if (perm == LocationPermission.denied ||
-        perm == LocationPermission.deniedForever) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text(
-              'Brak dostępu do lokalizacji. Odblokuj w ustawieniach.')));
-      return;
-    }
     try {
-      final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
-      _map.move(LatLng(pos.latitude, pos.longitude), 14);
+      final pos = await getCurrentGpsLocation();
+      if (pos == null) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(
+              'GPS niedostępny. Użyj 📍 aby wpisać współrzędne.')));
+        return;
+      }
+      _map.move(LatLng(pos.lat, pos.lon), 14);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Błąd GPS: $e')));
