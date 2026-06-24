@@ -27,11 +27,17 @@ const List<String> kGatunki = [
   'Rydz', 'Czubajka kania', 'Gołąbek zielonawy', 'Gąska zielonka',
 ];
 
-// Rodzaje lasu: kod BDL -> polska nazwa (do filtra).
+// Rodzaje lasu: kod BDL -> polska nazwa (do filtra). Wszystkie gatunki z bazy.
 const Map<String, String> kLasy = {
-  'SO': 'Sosna', 'ŚW': 'Świerk', 'JD': 'Jodła', 'BK': 'Buk',
-  'DB': 'Dąb', 'BRZ': 'Brzoza', 'OL': 'Olcha', 'OS': 'Osika',
-  'MD': 'Modrzew', 'GB': 'Grab',
+  // iglaste
+  'SO': 'Sosna', 'ŚW': 'Świerk', 'MD': 'Modrzew', 'DG': 'Daglezja', 'CIS': 'Cis',
+  // liściaste — dęby
+  'DB': 'Dąb', 'DB.S': 'Dąb szypułkowy', 'DB.B': 'Dąb bezszypułkowy',
+  'DB.C': 'Dąb czerwony',
+  // liściaste — pozostałe
+  'BK': 'Buk', 'JS': 'Jesion', 'KL': 'Klon', 'JW': 'Jawor',
+  'BRZ': 'Brzoza', 'LP': 'Lipa', 'AK': 'Akacja', 'TP': 'Topola',
+  'GB': 'Grab', 'OS': 'Osika', 'OL': 'Olcha', 'OL.S': 'Olcha szara', 'WZ': 'Wiąz',
 };
 
 Future<void> main() async {
@@ -250,25 +256,42 @@ class _MapaEkranState extends State<MapaEkran> {
   }
 
   /// Kolor wydzielenia: barwa wg gatunku (zieleń–brąz), jasność wg wieku.
-  /// Młodszy las = jaśniejszy, starszy = ciemniejszy (HSL lightness 78%→30%).
+  /// Iglaste → odcienie zieleni (hue 82–168).
+  /// Liściaste → odcienie brązu, złota, żółci (hue 8–108).
+  /// Wiek 0→120 lat: lightness 0.78→0.30 (młodnik jasny, starodrzew ciemny).
   Color _kolorWydzielenia(String sp, int wiek) {
     double hue, sat;
     switch (sp.toUpperCase()) {
-      // iglaste — odcienie zieleni
-      case 'SO': case 'SOC': hue = 120; sat = 0.55; break; // sosna — zieleń
-      case 'SW': case 'ŚW':  hue = 158; sat = 0.58; break; // świerk — ciemnozielony
-      case 'JD':              hue = 142; sat = 0.52; break; // jodła — głęboka zieleń
-      case 'MD':              hue = 82;  sat = 0.55; break; // modrzew — żółtozielony
-      // liściaste — odcienie brązu i złota
-      case 'BK':              hue = 24;  sat = 0.65; break; // buk — pomarańczowo-brązowy
-      case 'DB': case 'DBS': case 'DBB': hue = 14; sat = 0.60; break; // dąb — brązowy
-      case 'BRZ':             hue = 44;  sat = 0.72; break; // brzoza — złoty
-      case 'OL':              hue = 102; sat = 0.45; break; // olcha — oliwkowa zieleń
-      case 'OS':              hue = 76;  sat = 0.55; break; // osika — limonkowa zieleń
-      case 'GB':              hue = 58;  sat = 0.50; break; // grab — oliwkowy
-      default:                hue = 90;  sat = 0.28; break; // inne — szarozielony
+      // ── IGLASTE ─────────────────────────────────────────
+      case 'SO':              hue = 115; sat = 0.55; break; // Sosna — zieleń
+      case 'ŚW': case 'SW':  hue = 155; sat = 0.58; break; // Świerk — teal-zielony
+      case 'MD':              hue = 85;  sat = 0.55; break; // Modrzew — żółtozielony
+      case 'DG':              hue = 138; sat = 0.52; break; // Daglezja — głęboka zieleń
+      case 'CIS':             hue = 168; sat = 0.48; break; // Cis — ciemny teal
+      // ── LIŚCIASTE: dęby ─────────────────────────────────
+      case 'DB':              hue = 18;  sat = 0.62; break; // Dąb — brązowy
+      case 'DB.S':            hue = 18;  sat = 0.62; break; // Dąb szypułkowy
+      case 'DB.B':            hue = 16;  sat = 0.60; break; // Dąb bezszypułkowy
+      case 'DB.C':            hue = 8;   sat = 0.68; break; // Dąb czerwony — rudawy brąz
+      // ── LIŚCIASTE: ciepłe brązy i złota ─────────────────
+      case 'KL':              hue = 22;  sat = 0.70; break; // Klon — pomarańczowy
+      case 'BK':              hue = 26;  sat = 0.65; break; // Buk — pomarańczowo-brązowy
+      case 'JS':              hue = 32;  sat = 0.58; break; // Jesion — ciepły brąz
+      case 'JW':              hue = 38;  sat = 0.55; break; // Jawor — bursztynowy
+      case 'WZ':              hue = 41;  sat = 0.58; break; // Wiąz — złoto-brązowy
+      case 'BRZ':             hue = 45;  sat = 0.72; break; // Brzoza — złoty
+      case 'LP':              hue = 52;  sat = 0.68; break; // Lipa — złoty żółty
+      case 'AK':              hue = 58;  sat = 0.62; break; // Akacja — żółtozielony
+      // ── LIŚCIASTE: żółcienie i oliwki ───────────────────
+      case 'TP':              hue = 65;  sat = 0.55; break; // Topola — żółtozielony
+      case 'GB':              hue = 72;  sat = 0.50; break; // Grab — oliwkożółty
+      case 'OS':              hue = 78;  sat = 0.55; break; // Osika — limonkowa zieleń
+      case 'OL':              hue = 105; sat = 0.45; break; // Olcha — oliwkowa zieleń
+      case 'OL.S':            hue = 108; sat = 0.42; break; // Olcha szara — szaro-oliwkowy
+      // ── pozostałe/nieznane ──────────────────────────────
+      default:                hue = 90;  sat = 0.28; break; // szarozielony
     }
-    // wiek 0→120 lat: lightness 0.78→0.30 (młody jasny, stary ciemny)
+    // wiek 0→120 lat: lightness 0.78→0.30
     final lightness = 0.78 - (wiek.clamp(0, 120) / 120.0) * 0.48;
     return HSLColor.fromAHSL(1.0, hue, sat, lightness).toColor();
   }
@@ -634,9 +657,17 @@ class _MapaEkranState extends State<MapaEkran> {
                       const Text('jasny = młody  ciemny = stary', style: TextStyle(fontSize: 9, color: Colors.black45)),
                       const SizedBox(height: 4),
                       for (final e in const [
-                        ['SO', 'Sosna'], ['ŚW', 'Świerk'], ['JD', 'Jodła'],
-                        ['BK', 'Buk'], ['DB', 'Dąb'], ['BRZ', 'Brzoza'],
-                        ['OL', 'Olcha'], ['OS', 'Osika'], ['MD', 'Modrzew'], ['GB', 'Grab'],
+                        // iglaste
+                        ['SO', 'Sosna'], ['ŚW', 'Świerk'], ['MD', 'Modrzew'],
+                        ['DG', 'Daglezja'], ['CIS', 'Cis'],
+                        // liściaste
+                        ['DB', 'Dąb'], ['DB.S', 'Dąb szypułkowy'],
+                        ['DB.B', 'Dąb bezszypułkowy'], ['DB.C', 'Dąb czerwony'],
+                        ['KL', 'Klon'], ['BK', 'Buk'], ['JS', 'Jesion'],
+                        ['JW', 'Jawor'], ['WZ', 'Wiąz'], ['BRZ', 'Brzoza'],
+                        ['LP', 'Lipa'], ['AK', 'Akacja'], ['TP', 'Topola'],
+                        ['GB', 'Grab'], ['OS', 'Osika'],
+                        ['OL', 'Olcha'], ['OL.S', 'Olcha szara'],
                       ])
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 1),
