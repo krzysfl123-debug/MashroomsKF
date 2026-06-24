@@ -468,16 +468,33 @@ def aktywne_rewiry(conn):
 
 
 def rewir_ma_las(conn, rewir_id):
-    """Czy w forest_stands są drzewostany przecinające ten rewir?"""
+    """Czy rewir ma wystarczająco gęsty las (>= MIN_GESTOSC wydz/km²)?
+    Próg gęstości zamiast zwykłego exists() — zapobiega sytuacji gdy loader
+    zaciągnął tylko skrawek obszaru (np. Stara Rzeka: 19 wydz na 100 km²).
+    Poniżej progu agent traktuje rewir jako 'bez lasu' i ładuje BDL od nowa."""
+    MIN_GESTOSC = 2.0   # wydzieleń/km² — poniżej = niekompletne, przeładuj
     with conn.cursor() as cur:
         cur.execute("""
-            select exists(
-              select 1 from forest_stands fs
-              join rewiry r on r.id = %s
-              where st_intersects(fs.geom, r.geom)
-            )
+            select count(fs.id),
+                   st_area(r.geom::geography) / 1000000.0
+            from rewiry r
+            left join forest_stands fs on st_intersects(fs.geom, r.geom)
+            where r.id = %s
+            group by r.geom
         """, (rewir_id,))
-        return bool(cur.fetchone()[0])
+        row = cur.fetchone()
+        if not row:
+            return False
+        count, km2 = int(row[0]), float(row[1])
+        if count == 0:
+            return False
+        gestosc = count / max(km2, 1.0)
+        if gestosc < MIN_GESTOSC:
+            print(f"    [rewir {rewir_id}] las niekompletny: "
+                  f"{count} wydz / {km2:.1f} km² = {gestosc:.2f}/km² "
+                  f"< {MIN_GESTOSC} → przeładuję z BDL")
+            return False
+        return True
 
 
 def wydzielenia_rewiru(conn, rewir_id):
