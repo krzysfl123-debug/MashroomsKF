@@ -37,11 +37,11 @@ const Map<String, String> kLasy = {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Supabase.initialize(url: kSupabaseUrl, anonKey: kSupabaseAnon);
-  // Pasek nawigacji Androida: solidny nieprzezroczysty kolor — app rysuje się
-  // POWYŻEJ paska (klasyczny układ), nie za nim. Kolor biały, ikony ciemne.
+  // Android 15+ wymusza edge-to-edge — nie można się wypisać.
+  // Włączamy świadomie i obsługujemy insets sami (viewPaddingOf niżej).
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    systemNavigationBarColor: Color(0xFFFFFFFF),
-    systemNavigationBarIconBrightness: Brightness.dark,
+    systemNavigationBarColor: Colors.transparent,
     statusBarColor: Colors.transparent,
   ));
   runApp(const GrzybyApp());
@@ -249,26 +249,32 @@ class _MapaEkranState extends State<MapaEkran> {
     return pts;
   }
 
-  /// Kolor wg gatunku panującego drzewa (kod BDL species_cd).
-  Color _kolorGatunku(String sp) {
+  /// Kolor wydzielenia: barwa wg gatunku (zieleń–brąz), jasność wg wieku.
+  /// Młodszy las = jaśniejszy, starszy = ciemniejszy (HSL lightness 78%→30%).
+  Color _kolorWydzielenia(String sp, int wiek) {
+    double hue, sat;
     switch (sp.toUpperCase()) {
-      case 'SO': return const Color(0xFF2E7D32); // sosna - ciemna zieleń
-      case 'SOC': return const Color(0xFF2E7D32);
-      case 'SW': return const Color(0xFF00695C); // świerk - morski
-      case 'ŚW': return const Color(0xFF00695C);
-      case 'JD': return const Color(0xFF004D40); // jodła
-      case 'BK': return const Color(0xFFEF6C00); // buk - pomarańcz
-      case 'DB': return const Color(0xFF8D6E63); // dąb - brąz
-      case 'DBS': return const Color(0xFF8D6E63);
-      case 'DBB': return const Color(0xFF8D6E63);
-      case 'BRZ': return const Color(0xFFFDD835); // brzoza - żółty
-      case 'OL': return const Color(0xFF6D4C41); // olcha
-      case 'OS': return const Color(0xFF9CCC65); // osika
-      case 'MD': return const Color(0xFFC0CA33); // modrzew
-      case 'GB': return const Color(0xFF7CB342); // grab
-      default: return const Color(0xFF90A4AE); // inne/nieznane - szary
+      // iglaste — odcienie zieleni
+      case 'SO': case 'SOC': hue = 120; sat = 0.55; break; // sosna — zieleń
+      case 'SW': case 'ŚW':  hue = 158; sat = 0.58; break; // świerk — ciemnozielony
+      case 'JD':              hue = 142; sat = 0.52; break; // jodła — głęboka zieleń
+      case 'MD':              hue = 82;  sat = 0.55; break; // modrzew — żółtozielony
+      // liściaste — odcienie brązu i złota
+      case 'BK':              hue = 24;  sat = 0.65; break; // buk — pomarańczowo-brązowy
+      case 'DB': case 'DBS': case 'DBB': hue = 14; sat = 0.60; break; // dąb — brązowy
+      case 'BRZ':             hue = 44;  sat = 0.72; break; // brzoza — złoty
+      case 'OL':              hue = 102; sat = 0.45; break; // olcha — oliwkowa zieleń
+      case 'OS':              hue = 76;  sat = 0.55; break; // osika — limonkowa zieleń
+      case 'GB':              hue = 58;  sat = 0.50; break; // grab — oliwkowy
+      default:                hue = 90;  sat = 0.28; break; // inne — szarozielony
     }
+    // wiek 0→120 lat: lightness 0.78→0.30 (młody jasny, stary ciemny)
+    final lightness = 0.78 - (wiek.clamp(0, 120) / 120.0) * 0.48;
+    return HSLColor.fromAHSL(1.0, hue, sat, lightness).toColor();
   }
+
+  /// Kolor reprezentatywny gatunku (wiek 50 lat) — do legendy i dymka.
+  Color _kolorGatunku(String sp) => _kolorWydzielenia(sp, 50);
 
   Future<void> _wczytajRewiry() async {
     // używamy RPC lista_rewirow — zwraca id, nazwę i gotowy środek
@@ -459,8 +465,8 @@ class _MapaEkranState extends State<MapaEkran> {
                       for (final ring in w.pierscienie)
                         Polygon(
                           points: ring,
-                          color: _kolorGatunku(w.gatunek).withValues(alpha: 0.45),
-                          borderColor: _kolorGatunku(w.gatunek),
+                          color: _kolorWydzielenia(w.gatunek, w.wiek).withValues(alpha: 0.45),
+                          borderColor: _kolorWydzielenia(w.gatunek, w.wiek),
                           borderStrokeWidth: 1,
                         ),
                   ],
@@ -625,6 +631,7 @@ class _MapaEkranState extends State<MapaEkran> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text('Gatunki drzew', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                      const Text('jasny = młody  ciemny = stary', style: TextStyle(fontSize: 9, color: Colors.black45)),
                       const SizedBox(height: 4),
                       for (final e in const [
                         ['SO', 'Sosna'], ['ŚW', 'Świerk'], ['JD', 'Jodła'],
@@ -634,9 +641,20 @@ class _MapaEkranState extends State<MapaEkran> {
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 1),
                           child: Row(mainAxisSize: MainAxisSize.min, children: [
-                            Container(width: 12, height: 12,
-                                decoration: BoxDecoration(color: _kolorGatunku(e[0]),
-                                    borderRadius: BorderRadius.circular(2))),
+                            // młody (10 lat) — jasny
+                            Container(width: 10, height: 12,
+                                decoration: BoxDecoration(
+                                    color: _kolorWydzielenia(e[0], 10),
+                                    borderRadius: const BorderRadius.only(
+                                      topLeft: Radius.circular(2),
+                                      bottomLeft: Radius.circular(2)))),
+                            // stary (100 lat) — ciemny
+                            Container(width: 10, height: 12,
+                                decoration: BoxDecoration(
+                                    color: _kolorWydzielenia(e[0], 100),
+                                    borderRadius: const BorderRadius.only(
+                                      topRight: Radius.circular(2),
+                                      bottomRight: Radius.circular(2)))),
                             const SizedBox(width: 5),
                             Text(e[1], style: const TextStyle(fontSize: 11)),
                           ]),
@@ -648,8 +666,10 @@ class _MapaEkranState extends State<MapaEkran> {
             ),
 
           // panel dolny: suwak dnia
+          // bottom = wysokosc paska systemu (Android 15+ edge-to-edge)
           Positioned(
-            left: 0, right: 0, bottom: 0,
+            left: 0, right: 0,
+            bottom: MediaQuery.viewPaddingOf(context).bottom,
             child: Card(
               margin: const EdgeInsets.all(8),
               child: Padding(
@@ -984,7 +1004,7 @@ class _MapaEkranState extends State<MapaEkran> {
           children: [
             Row(children: [
               Container(width: 16, height: 16,
-                  decoration: BoxDecoration(color: _kolorGatunku(w.gatunek),
+                  decoration: BoxDecoration(color: _kolorWydzielenia(w.gatunek, w.wiek),
                       borderRadius: BorderRadius.circular(3))),
               const SizedBox(width: 8),
               Text(nazwa, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
