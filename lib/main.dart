@@ -366,6 +366,92 @@ class _MapaEkranState extends State<MapaEkran> {
     return inside;
   }
 
+  Future<void> _wpisKoordynaty() async {
+    final nazwaCtrl = TextEditingController(text: 'Mój rewir');
+    final latCtrl  = TextEditingController();
+    final lonCtrl  = TextEditingController();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Dodaj rewir — wpisz koordynaty'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nazwaCtrl,
+              decoration: const InputDecoration(labelText: 'Nazwa rewiru'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: latCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Szerokość geograficzna (lat)',
+                hintText: 'np. 53.6455',
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: lonCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Długość geograficzna (lon)',
+                hintText: 'np. 18.3122',
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text('Promień rewiru: 5 km',
+                style: TextStyle(fontSize: 12, color: Colors.black54)),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Anuluj')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Załóż')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final lat = double.tryParse(latCtrl.text.trim().replaceAll(',', '.'));
+    final lon = double.tryParse(lonCtrl.text.trim().replaceAll(',', '.'));
+
+    if (lat == null || lon == null ||
+        lat < 48.5 || lat > 55.5 || lon < 13.5 || lon > 24.5) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(
+            'Nieprawidłowe współrzędne — podaj koordynaty z obszaru Polski.')),
+      );
+      return;
+    }
+
+    try {
+      await supabase.rpc('dodaj_rewir', params: {
+        'in_name': nazwaCtrl.text.trim().isEmpty
+            ? 'Mój rewir'
+            : nazwaCtrl.text.trim(),
+        'in_lat': lat,
+        'in_lon': lon,
+        'in_promien_km': 5,
+      });
+      if (mounted) {
+        _map.move(LatLng(lat, lon), 12); // centruj mapę na nowym rewirze
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Rewir założony. Hotspoty pojawią się po nocnym skanie.')));
+      }
+      await _wczytajRewiry();
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Nie udało się: $e')));
+    }
+  }
+
   Future<void> _zapytajORewir(LatLng p) async {
     final nazwaCtrl = TextEditingController(text: 'Mój rewir');
     final ok = await showDialog<bool>(
@@ -797,6 +883,15 @@ class _MapaEkranState extends State<MapaEkran> {
             foregroundColor: Colors.black87,
             onPressed: _panelRewirow,
             child: const Icon(Icons.list),
+          ),
+          const SizedBox(height: 4),
+          FloatingActionButton.small(
+            heroTag: 'rewir_koord',
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black87,
+            tooltip: 'Dodaj rewir przez współrzędne',
+            onPressed: _wpisKoordynaty,
+            child: const Icon(Icons.my_location),
           ),
           const SizedBox(height: 10),
           FloatingActionButton.extended(
