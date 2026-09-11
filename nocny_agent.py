@@ -47,6 +47,7 @@ GATUNKI = {
     "Borowik szlachetny":     dict(t_opt=16.0, t_tol=4.5, wilg_prog=55, dni_grzybni=10, ochl_prog=2.5, ochlodzenie=0.30, lag=6, mce=range(6, 12), symbioza=["SO", "ŚW", "DB", "BK"], wiek_min=40, wiek_max=999),
     "Borowik usiatkowany":    dict(t_opt=19.0, t_tol=4.0, wilg_prog=45, dni_grzybni=5,  ochl_prog=0.0, ochlodzenie=0.00, lag=4, mce=range(5, 10), symbioza=["DB", "BK", "GB"], wiek_min=40, wiek_max=999),
     "Borowik ceglastoporowy": dict(t_opt=17.0, t_tol=4.5, wilg_prog=50, dni_grzybni=7,  ochl_prog=1.0, ochlodzenie=0.10, lag=5, mce=range(6, 12), symbioza=["ŚW", "JD", "BK", "DB"], wiek_min=30, wiek_max=999),
+    "Borowik amerykański":    dict(t_opt=16.0, t_tol=5.0, wilg_prog=40, dni_grzybni=6,  ochl_prog=1.0, ochlodzenie=0.15, lag=5, mce=range(8, 11), symbioza=["SO"], wiek_min=20, wiek_max=999),
     "Podgrzybek brunatny":    dict(t_opt=15.0, t_tol=4.0, wilg_prog=50, dni_grzybni=7,  ochl_prog=1.5, ochlodzenie=0.20, lag=5, mce=range(8, 12), symbioza=["SO", "ŚW"], wiek_min=30, wiek_max=999),
     "Podgrzybek zajączek":    dict(t_opt=16.0, t_tol=4.0, wilg_prog=45, dni_grzybni=5,  ochl_prog=0.0, ochlodzenie=0.00, lag=4, mce=range(6, 11), symbioza=["SO", "DB", "BK", "BRZ"], wiek_min=20, wiek_max=999),
     "Maślak zwyczajny":       dict(t_opt=15.0, t_tol=4.5, wilg_prog=35, dni_grzybni=3,  ochl_prog=0.0, ochlodzenie=0.10, lag=2, mce=range(6, 12), symbioza=["SO"], wiek_min=5, wiek_max=40),
