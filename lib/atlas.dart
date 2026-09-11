@@ -24,6 +24,7 @@ const Map<String, String> kWikiNazwy = {
   'Kurka': 'Pieprznik jadalny',
   'Rydz': 'Mleczaj rydz',
   'Borowik ceglastoporowy': 'Krasnoborowik ceglastopory',
+  'Borowik amerykański': 'Złotoborowik wysmukły',
 };
 
 /// Zwraca tytuł artykułu Wiki dla danej nazwy gatunku.
@@ -44,6 +45,7 @@ const List<GatunekInfo> kAtlasGatunki = [
   GatunekInfo('Borowik szlachetny', ['SO','ŚW','DB','BK'], 40, 999, 16.0, 55, 10, 2.5, 6, [6,7,8,9,10,11]),
   GatunekInfo('Borowik usiatkowany', ['DB','BK','GB'], 40, 999, 19.0, 45, 5, 0.0, 4, [5,6,7,8,9]),
   GatunekInfo('Borowik ceglastoporowy', ['ŚW','JD','BK','DB'], 30, 999, 17.0, 50, 7, 1.0, 5, [6,7,8,9,10,11]),
+  GatunekInfo('Borowik amerykański', ['SO'], 20, 999, 16.0, 40, 6, 1.0, 5, [8,9,10]),
   GatunekInfo('Podgrzybek brunatny', ['SO','ŚW'], 30, 999, 15.0, 50, 7, 1.5, 5, [8,9,10,11]),
   GatunekInfo('Podgrzybek zajączek', ['SO','DB','BK','BRZ'], 20, 999, 16.0, 45, 5, 0.0, 4, [6,7,8,9,10]),
   GatunekInfo('Maślak zwyczajny', ['SO'], 5, 40, 15.0, 35, 3, 0.0, 2, [6,7,8,9,10,11]),
