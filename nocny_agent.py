@@ -100,47 +100,26 @@ def parowanie_dnia(t_max, t_min, rh=68.0):
 
 def symuluj_wilgotnosc(weather, do_daty, dni_hist=45, wilg0=40.0):
     """Liczy kroczącą wilgotność ściółki (0-100) dzień po dniu, aż do `do_daty`.
-    Deszcz DOLEWA (do 20 mm/dobę ~2.2 pkt/mm, nadmiar słabiej), temperatura
-    ODPAROWUje/rosa DOWILŻA. Zwraca dict {date: wilgotnosc}. Start `dni_hist` dni
-    wstecz od najwcześniejszej potrzebnej daty, by zbiornik 'rozgrzał się' realnymi danymi.
-
-    PRÓG ROZMOKNIĘCIA: po suszy zhydrofobizowana ściółka najpierw spływa/odparowuje,
-    zanim zacznie magazynować. Ukryty bufor 'namoku' (NAMOK_POJ mm): gdy ściółka sucha,
-    deszcz najpierw napełnia bufor (~1,5 dnia typowego deszczu), a dopiero nadmiar ponad
-    bufor podnosi właściwą wilgotność. Bufor (powierzchnia) wysycha TYLKO w dni bez deszczu,
-    tym szybciej im goręcej. Gdy ściółka już wilgotna — bufor pełny, deszcz idzie prosto
-    do magazynu (zero kary)."""
-    NAMOK_POJ = 12.0          # mm — pojemność bufora rozmoknięcia (~1,5 dnia deszczu); TU się reguluje
+    Deszcz DOLEWA (mm * 1.6, sufit 100), temperatura ODPAROWUje/rosa DOWILŻA.
+    Zwraca dict {date: wilgotnosc}. Start `dni_hist` dni wstecz od najwcześniejszej
+    potrzebnej daty, by zbiornik zdążył się 'rozgrzać' realnymi danymi."""
     if not weather:
         return {}
     start = min(min(weather), do_daty - timedelta(days=dni_hist))
     wilg = {}
     poziom = wilg0
-    namok = NAMOK_POJ * _clip(poziom / 30.0, 0.0, 1.0)   # wilgotna ściółka = bufor już pełny
     d = start
     while d <= do_daty:
         rec = weather.get(d) or {}
         deszcz = rec.get("rain") or 0.0
-        par = parowanie_dnia(rec.get("t_max"), rec.get("t_min"))
-        # 1) deszcz najpierw rozmacza powierzchnię (bufor), nadmiar -> magazyn
-        if deszcz > 0:
-            brak = max(NAMOK_POJ - namok, 0.0)
-            do_bufora = min(deszcz, brak)
-            namok += do_bufora
-            deszcz_do_sciolki = deszcz - do_bufora
+        # deszcz dolewa do ściółki ze słabnącą wydajnością: do 20 mm/dobę nasącza
+        # mocno (~2.2 pkt/mm), nadmiar (ulewa) w dużej części spływa/przesiąka głębiej.
+        if deszcz <= 20:
+            poziom += deszcz * 2.2
         else:
-            deszcz_do_sciolki = 0.0
-        # 2) magazyn: do 20 mm/dobę nasącza mocno, nadmiar (ulewa) słabiej
-        if deszcz_do_sciolki <= 20:
-            poziom += deszcz_do_sciolki * 2.2
-        else:
-            poziom += 20 * 2.2 + (deszcz_do_sciolki - 20) * 2.2 * 0.4
-        poziom -= par
+            poziom += 20 * 2.2 + (deszcz - 20) * 2.2 * 0.4
+        poziom -= parowanie_dnia(rec.get("t_max"), rec.get("t_min"))
         poziom = _clip(poziom, 0.0, 100.0)
-        # 3) bufor (wierzchnia warstwa) wysycha tylko w dni bez deszczu
-        if deszcz < 1.0:
-            namok -= par
-        namok = _clip(namok, 0.0, NAMOK_POJ)
         wilg[d] = poziom
         d += timedelta(days=1)
     return wilg
@@ -310,10 +289,14 @@ def pobierz_pogode_komorek(cells, dni_wstecz=45, dni_wprzod=15):
     dzis = dt.date.today()
     arch_start = (dzis - timedelta(days=dni_wstecz)).isoformat()
     dzis_str = dzis.isoformat()
-    fc_start = (dzis - timedelta(days=15)).isoformat()
+    # Forecast pobieramy Z PRZESZŁOŚCIĄ (past_days): endpoint /forecast z parametrem
+    # past_days zwraca RZECZYWISTĄ pogodę dla przeszłych dni z tego samego modelu.
+    # Dzięki temu, gdy agent postoi dłużej (np. 2 tyg.), po ruszeniu wypełnia LUKĘ
+    # między starym archiwum ERA5 (które ma ~5 dni opóźnienia) a dniem dzisiejszym.
+    # past_days max = 92; bierzemy z zapasem tyle, ile wynosi dni_wstecz.
+    fc_past = min(int(dni_wstecz), 92)
     # Forecast API sięga max ~16 dni w przód — przycinamy, by nie dostać błędu 400.
     dni_fc = min(int(dni_wprzod), 15)
-    fc_end = (dzis + timedelta(days=dni_fc)).isoformat()
 
     out = {}
     cells = list(cells)
@@ -340,7 +323,7 @@ def pobierz_pogode_komorek(cells, dni_wstecz=45, dni_wprzod=15):
                       "start_date": arch_start, "end_date": dzis_str})
         fcst = fetch("https://api.open-meteo.com/v1/forecast",
                      {**wsp, "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
-                      "start_date": fc_start, "end_date": fc_end})
+                      "past_days": fc_past, "forecast_days": dni_fc + 1})
         arch = arch if isinstance(arch, list) else [arch]
         fcst = fcst if isinstance(fcst, list) else [fcst]
 
@@ -468,32 +451,16 @@ def aktywne_rewiry(conn):
 
 
 def rewir_ma_las(conn, rewir_id):
-    """Czy rewir ma wystarczająco gęsty las (>= MIN_GESTOSC wydz/km²)?
-    Próg gęstości zamiast zwykłego exists() — zapobiega sytuacji gdy loader
-    zaciągnął tylko skrawek obszaru (np. Stara Rzeka: 19 wydz na 100 km²)."""
-    MIN_GESTOSC = 2.0
+    """Czy w forest_stands są drzewostany przecinające ten rewir?"""
     with conn.cursor() as cur:
         cur.execute("""
-            select count(fs.id),
-                   st_area(r.geom::geography) / 1000000.0
-            from rewiry r
-            left join forest_stands fs on st_intersects(fs.geom, r.geom)
-            where r.id = %s
-            group by r.geom
+            select exists(
+              select 1 from forest_stands fs
+              join rewiry r on r.id = %s
+              where st_intersects(fs.geom, r.geom)
+            )
         """, (rewir_id,))
-        row = cur.fetchone()
-        if not row:
-            return False
-        count, km2 = int(row[0]), float(row[1])
-        if count == 0:
-            return False
-        gestosc = count / max(km2, 1.0)
-        if gestosc < MIN_GESTOSC:
-            print(f"    [rewir {rewir_id}] las niekompletny: "
-                  f"{count} wydz / {km2:.1f} km² = {gestosc:.2f}/km² "
-                  f"< {MIN_GESTOSC} → przeładuję z BDL")
-            return False
-        return True
+        return bool(cur.fetchone()[0])
 
 
 def wydzielenia_rewiru(conn, rewir_id):
