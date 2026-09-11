@@ -5,10 +5,16 @@ on:
   schedule:
     - cron: "30 1 * * *"
 
+# Tylko JEDNO uruchomienie naraz. Zapobiega nakładaniu się (ręczne + cron),
+# które kasowało sobie nawzajem trwający przebieg (ForeignKeyViolation).
+concurrency:
+  group: nocny-agent
+  cancel-in-progress: false
+
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
