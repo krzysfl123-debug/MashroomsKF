@@ -510,15 +510,20 @@ def nowy_przebieg(conn, kind="detail"):
     return rid
 
 
-def sprzataj_stare(conn, kind):
-    """Po udanym przebiegu kasuje wszystkie STARSZE przebiegi tego samego rodzaju
-    (hotspoty/potencjał znikają kaskadowo). W bazie zostaje tylko najnowszy komplet."""
+def sprzataj_stare(conn, kind, biezacy_run_id=None):
+    """Po udanym przebiegu kasuje STARSZE ZAKOŃCZONE przebiegi tego samego rodzaju
+    (hotspoty/potencjał znikają kaskadowo). W bazie zostaje tylko najnowszy komplet.
+    WAŻNE: NIE kasuje przebiegów trwających ('running') ani bieżącego — inaczej przy
+    nakładających się uruchomieniach (ręczne + cron) skasowalibyśmy aktywny run,
+    co powoduje ForeignKeyViolation przy zapisie hotspotów (run_id znika w trakcie)."""
     with conn.cursor() as cur:
         cur.execute("""
             delete from scan_runs
             where kind = %s
-              and id <> (select max(id) from scan_runs where kind = %s and status = 'done')
-        """, (kind, kind))
+              and status in ('done', 'failed')
+              and id <> coalesce(%s, -1)
+              and id < (select max(id) from scan_runs where kind = %s and status = 'done')
+        """, (kind, biezacy_run_id, kind))
     conn.commit()
 
 
@@ -642,7 +647,7 @@ def run_makro(grid_step=0.2, horyzont=tuple(range(0, 29))):
         print(f"[makro] zapisano {len(pot_rows)} rekordów potencjału")
 
         zamknij_przebieg(conn, run_id, "done")
-        sprzataj_stare(conn, "makro")
+        sprzataj_stare(conn, "makro", run_id)
     except Exception as e:
         zamknij_przebieg(conn, run_id, "failed", str(e)[:500])
         raise
@@ -748,7 +753,7 @@ def run_scan(horyzont=tuple(range(0, 29))):
                 print(f"[rewir {rewir['id']} '{rewir.get('name')}'] POMINIĘTY — błąd: {type(e).__name__}: {str(e)[:200]}")
 
         zamknij_przebieg(conn, run_id, "done")
-        sprzataj_stare(conn, "detail")
+        sprzataj_stare(conn, "detail", run_id)
     except Exception as e:
         conn.rollback()  # odtruwa transakcję przed zapisem statusu 'failed'
         try:
