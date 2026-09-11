@@ -1,12 +1,11 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
-import 'gps_service.dart';
+import 'package:geolocator/geolocator.dart';
 import 'atlas.dart';
 
 // =====================================================================
@@ -28,29 +27,16 @@ const List<String> kGatunki = [
   'Rydz', 'Czubajka kania', 'Gołąbek zielonawy', 'Gąska zielonka',
 ];
 
-// Rodzaje lasu: kod BDL -> polska nazwa (do filtra). Wszystkie gatunki z bazy.
+// Rodzaje lasu: kod BDL -> polska nazwa (do filtra).
 const Map<String, String> kLasy = {
-  // iglaste
-  'SO': 'Sosna', 'ŚW': 'Świerk', 'MD': 'Modrzew', 'DG': 'Daglezja', 'CIS': 'Cis',
-  // liściaste — dęby
-  'DB': 'Dąb', 'DB.S': 'Dąb szypułkowy', 'DB.B': 'Dąb bezszypułkowy',
-  'DB.C': 'Dąb czerwony',
-  // liściaste — pozostałe
-  'BK': 'Buk', 'JS': 'Jesion', 'KL': 'Klon', 'JW': 'Jawor',
-  'BRZ': 'Brzoza', 'LP': 'Lipa', 'AK': 'Akacja', 'TP': 'Topola',
-  'GB': 'Grab', 'OS': 'Osika', 'OL': 'Olcha', 'OL.S': 'Olcha szara', 'WZ': 'Wiąz',
+  'SO': 'Sosna', 'ŚW': 'Świerk', 'JD': 'Jodła', 'BK': 'Buk',
+  'DB': 'Dąb', 'BRZ': 'Brzoza', 'OL': 'Olcha', 'OS': 'Osika',
+  'MD': 'Modrzew', 'GB': 'Grab',
 };
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Supabase.initialize(url: kSupabaseUrl, anonKey: kSupabaseAnon);
-  // Android 15+ wymusza edge-to-edge — nie można się wypisać.
-  // Włączamy świadomie i obsługujemy insets sami (viewPaddingOf niżej).
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    systemNavigationBarColor: Colors.transparent,
-    statusBarColor: Colors.transparent,
-  ));
   runApp(const GrzybyApp());
 }
 
@@ -256,49 +242,43 @@ class _MapaEkranState extends State<MapaEkran> {
     return pts;
   }
 
-  /// Kolor wydzielenia: barwa wg gatunku (zieleń–brąz), jasność wg wieku.
-  /// Iglaste → odcienie zieleni (hue 82–168).
-  /// Liściaste → odcienie brązu, złota, żółci (hue 8–108).
-  /// Wiek 0→120 lat: lightness 0.78→0.30 (młodnik jasny, starodrzew ciemny).
-  Color _kolorWydzielenia(String sp, int wiek) {
-    double hue, sat;
+  /// Kolor wg gatunku panującego drzewa (kod BDL species_cd).
+  Color _kolorGatunku(String sp) {
     switch (sp.toUpperCase()) {
-      // ── IGLASTE ─────────────────────────────────────────
-      case 'SO':              hue = 115; sat = 0.55; break; // Sosna — zieleń
-      case 'ŚW': case 'SW':  hue = 155; sat = 0.58; break; // Świerk — teal-zielony
-      case 'MD':              hue = 85;  sat = 0.55; break; // Modrzew — żółtozielony
-      case 'DG':              hue = 138; sat = 0.52; break; // Daglezja — głęboka zieleń
-      case 'CIS':             hue = 168; sat = 0.48; break; // Cis — ciemny teal
-      // ── LIŚCIASTE: dęby ─────────────────────────────────
-      case 'DB':              hue = 18;  sat = 0.62; break; // Dąb — brązowy
-      case 'DB.S':            hue = 18;  sat = 0.62; break; // Dąb szypułkowy
-      case 'DB.B':            hue = 16;  sat = 0.60; break; // Dąb bezszypułkowy
-      case 'DB.C':            hue = 8;   sat = 0.68; break; // Dąb czerwony — rudawy brąz
-      // ── LIŚCIASTE: ciepłe brązy i złota ─────────────────
-      case 'KL':              hue = 22;  sat = 0.70; break; // Klon — pomarańczowy
-      case 'BK':              hue = 26;  sat = 0.65; break; // Buk — pomarańczowo-brązowy
-      case 'JS':              hue = 32;  sat = 0.58; break; // Jesion — ciepły brąz
-      case 'JW':              hue = 38;  sat = 0.55; break; // Jawor — bursztynowy
-      case 'WZ':              hue = 41;  sat = 0.58; break; // Wiąz — złoto-brązowy
-      case 'BRZ':             hue = 45;  sat = 0.72; break; // Brzoza — złoty
-      case 'LP':              hue = 52;  sat = 0.68; break; // Lipa — złoty żółty
-      case 'AK':              hue = 58;  sat = 0.62; break; // Akacja — żółtozielony
-      // ── LIŚCIASTE: żółcienie i oliwki ───────────────────
-      case 'TP':              hue = 65;  sat = 0.55; break; // Topola — żółtozielony
-      case 'GB':              hue = 72;  sat = 0.50; break; // Grab — oliwkożółty
-      case 'OS':              hue = 78;  sat = 0.55; break; // Osika — limonkowa zieleń
-      case 'OL':              hue = 105; sat = 0.45; break; // Olcha — oliwkowa zieleń
-      case 'OL.S':            hue = 108; sat = 0.42; break; // Olcha szara — szaro-oliwkowy
-      // ── pozostałe/nieznane ──────────────────────────────
-      default:                hue = 90;  sat = 0.28; break; // szarozielony
+      case 'SO': return const Color(0xFF2E7D32); // sosna - ciemna zieleń
+      case 'SOC': return const Color(0xFF2E7D32);
+      case 'SW': return const Color(0xFF00695C); // świerk - morski
+      case 'ŚW': return const Color(0xFF00695C);
+      case 'JD': return const Color(0xFF004D40); // jodła
+      case 'BK': return const Color(0xFFEF6C00); // buk - pomarańcz
+      case 'DB': return const Color(0xFF8D6E63); // dąb - brąz
+      case 'DBS': return const Color(0xFF8D6E63);
+      case 'DBB': return const Color(0xFF8D6E63);
+      case 'BRZ': return const Color(0xFFFDD835); // brzoza - żółty
+      case 'OL': return const Color(0xFF6D4C41); // olcha
+      case 'OS': return const Color(0xFF9CCC65); // osika
+      case 'MD': return const Color(0xFFC0CA33); // modrzew
+      case 'GB': return const Color(0xFF7CB342); // grab
+      default: return const Color(0xFF90A4AE); // inne/nieznane - szary
     }
-    // wiek 0→120 lat: lightness 0.78→0.30
-    final lightness = 0.78 - (wiek.clamp(0, 120) / 120.0) * 0.48;
-    return HSLColor.fromAHSL(1.0, hue, sat, lightness).toColor();
   }
 
-  /// Kolor reprezentatywny gatunku (wiek 50 lat) — do legendy i dymka.
-  Color _kolorGatunku(String sp) => _kolorWydzielenia(sp, 50);
+  /// Kolor gatunku Z UWZGLĘDNIENIEM WIEKU: młody las = jaśniejszy odcień,
+  /// stary = ciemniejszy. Płynna skala w obrębie koloru danego gatunku.
+  /// Wiek 0 lat → +38% jasności; ~110 lat → −28% jasności; środek (~55 lat) = kolor bazowy.
+  Color _kolorGatunkuWiek(String sp, int wiek) {
+    final baza = _kolorGatunku(sp);
+    // znormalizuj wiek do zakresu -1..+1 (młody dodatni = rozjaśnij, stary ujemny = przyciemnij)
+    final w = wiek.clamp(0, 120);
+    final t = (55 - w) / 55.0; // >0 młodszy niż 55, <0 starszy
+    final hsl = HSLColor.fromColor(baza);
+    // dopasuj jasność: młody +, stary − (z ograniczeniem żeby nie wyjść poza 0..1)
+    final delta = t > 0 ? t * 0.30 : t * 0.22;
+    final nowaL = (hsl.lightness + delta).clamp(0.12, 0.90);
+    // przy młodym lekko zmniejsz nasycenie (świeża zieleń), przy starym lekko zwiększ
+    final nowaS = (hsl.saturation - t * 0.10).clamp(0.15, 1.0);
+    return hsl.withLightness(nowaL).withSaturation(nowaS).toColor();
+  }
 
   Future<void> _wczytajRewiry() async {
     // używamy RPC lista_rewirow — zwraca id, nazwę i gotowy środek
@@ -333,140 +313,6 @@ class _MapaEkranState extends State<MapaEkran> {
     if (score >= 45) return const Color(0xFFFB8C00); // pomarańcz
     if (score >= 38) return const Color(0xFFE53935); // czerwony
     return const Color(0xFFB71C1C);                  // ciemnoczerwony — słabo
-  }
-
-  // =====================================================================
-  // KLIK W LAS — hit-testing polygonów (ray-casting, ten sam alg. co agent)
-  // =====================================================================
-
-  /// Zwraca wydzielenie lasu, w obrębie którego leży kliknięty punkt (lub null).
-  _Wydzielenie? _znajdzWydzielenie(LatLng punkt) {
-    for (final w in _las) {
-      for (final ring in w.pierscienie) {
-        if (_punktWPolygonie(punkt, ring)) return w;
-      }
-    }
-    return null;
-  }
-
-  /// Ray-casting: czy punkt (lat/lon) leży wewnątrz wielokąta?
-  bool _punktWPolygonie(LatLng p, List<LatLng> poly) {
-    bool inside = false;
-    int j = poly.length - 1;
-    for (int i = 0; i < poly.length; i++) {
-      final yi = poly[i].latitude;
-      final yj = poly[j].latitude;
-      final xi = poly[i].longitude;
-      final xj = poly[j].longitude;
-      if ((yi > p.latitude) != (yj > p.latitude) &&
-          p.longitude < (xj - xi) * (p.latitude - yi) / (yj - yi) + xi) {
-        inside = !inside;
-      }
-      j = i;
-    }
-    return inside;
-  }
-
-  Future<void> _gpsLocate() async {
-    try {
-      final pos = await getCurrentGpsLocation();
-      if (pos == null) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text(
-              'GPS niedostępny. Użyj 📍 aby wpisać współrzędne.')));
-        return;
-      }
-      _map.move(LatLng(pos.lat, pos.lon), 14);
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Błąd GPS: $e')));
-    }
-  }
-
-  Future<void> _wpisKoordynaty() async {
-    final nazwaCtrl = TextEditingController(text: 'Mój rewir');
-    final latCtrl  = TextEditingController();
-    final lonCtrl  = TextEditingController();
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Dodaj rewir — wpisz koordynaty'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nazwaCtrl,
-              decoration: const InputDecoration(labelText: 'Nazwa rewiru'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: latCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Szerokość geograficzna (lat)',
-                hintText: 'np. 53.6455',
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: lonCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Długość geograficzna (lon)',
-                hintText: 'np. 18.3122',
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text('Promień rewiru: 5 km',
-                style: TextStyle(fontSize: 12, color: Colors.black54)),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Anuluj')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Załóż')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-
-    final lat = double.tryParse(latCtrl.text.trim().replaceAll(',', '.'));
-    final lon = double.tryParse(lonCtrl.text.trim().replaceAll(',', '.'));
-
-    if (lat == null || lon == null ||
-        lat < 48.5 || lat > 55.5 || lon < 13.5 || lon > 24.5) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text(
-            'Nieprawidłowe współrzędne — podaj koordynaty z obszaru Polski.')),
-      );
-      return;
-    }
-
-    try {
-      await supabase.rpc('dodaj_rewir', params: {
-        'in_name': nazwaCtrl.text.trim().isEmpty
-            ? 'Mój rewir'
-            : nazwaCtrl.text.trim(),
-        'in_lat': lat,
-        'in_lon': lon,
-        'in_promien_km': 5,
-      });
-      if (mounted) {
-        _map.move(LatLng(lat, lon), 12); // centruj mapę na nowym rewirze
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text(
-                'Rewir założony. Hotspoty pojawią się po nocnym skanie.')));
-      }
-      await _wczytajRewiry();
-      if (mounted) setState(() {});
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Nie udało się: $e')));
-    }
   }
 
   Future<void> _zapytajORewir(LatLng p) async {
@@ -559,15 +405,7 @@ class _MapaEkranState extends State<MapaEkran> {
               onTap: (tapPos, latlng) {
                 if (_trybRewiru) {
                   _zapytajORewir(latlng);
-                  setState(() => _trybRewiru = false);
-                  return;
-                }
-                // Klik w wydzielenie lasu (gdy las widoczny, a w tym miejscu
-                // nie ma grzybka ani kółka — te mają własne GestureDetektory
-                // i pochłaniają tap, więc onTap tutaj nie dosięgnie).
-                if (_pokazLas && _las.isNotEmpty) {
-                  final w = _znajdzWydzielenie(latlng);
-                  if (w != null) _pokazLasInfo(w, latlng);
+                  setState(() => _trybRewiru = false); // po założeniu wracamy do nawigacji
                 }
               },
               onPositionChanged: (camera, hasGesture) {
@@ -582,8 +420,7 @@ class _MapaEkranState extends State<MapaEkran> {
                 userAgentPackageName: 'pl.grzyby.app',
                 maxZoom: 19,
               ),
-              // warstwa LASU (wielokąty wydzieleń) — tylko duży zoom, kolor wg gatunku.
-              // Kliknięcie w dowolne miejsce polygonu -> _pokazLasInfo (via onTap wyżej).
+              // warstwa LASU (wielokąty wydzieleń) — tylko duży zoom, kolor wg gatunku
               if (_pokazLas)
                 PolygonLayer(
                   polygons: [
@@ -591,10 +428,26 @@ class _MapaEkranState extends State<MapaEkran> {
                       for (final ring in w.pierscienie)
                         Polygon(
                           points: ring,
-                          color: _kolorWydzielenia(w.gatunek, w.wiek).withValues(alpha: 0.45),
-                          borderColor: _kolorWydzielenia(w.gatunek, w.wiek),
+                          color: _kolorGatunkuWiek(w.gatunek, w.wiek).withValues(alpha: 0.50),
+                          borderColor: _kolorGatunkuWiek(w.gatunek, w.wiek),
                           borderStrokeWidth: 1,
                         ),
+                  ],
+                ),
+              // niewidoczne znaczniki w środkach wydzieleń — do dymka po kliknięciu
+              if (_pokazLas)
+                MarkerLayer(
+                  markers: [
+                    for (final w in _las)
+                      Marker(
+                        point: w.srodek,
+                        width: 22,
+                        height: 22,
+                        child: GestureDetector(
+                          onTap: () => _pokazLasInfo(w),
+                          child: const SizedBox.expand(),
+                        ),
+                      ),
                   ],
                 ),
               // warstwa potencjału krajowego (makro) — TYLKO przy oddaleniu;
@@ -666,6 +519,25 @@ class _MapaEkranState extends State<MapaEkran> {
                     ),
                 ],
               ),
+              // kropka "jesteś tutaj" (GPS)
+              if (_mojaPozycja != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _mojaPozycja!,
+                      width: 24,
+                      height: 24,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.blue.withValues(alpha: 0.9),
+                          border: Border.all(color: Colors.white, width: 3),
+                          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 4)],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
             ],
           ),
 
@@ -757,39 +629,31 @@ class _MapaEkranState extends State<MapaEkran> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text('Gatunki drzew', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
-                      const Text('jasny = młody  ciemny = stary', style: TextStyle(fontSize: 9, color: Colors.black45)),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 2),
+                      Row(mainAxisSize: MainAxisSize.min, children: const [
+                        Text('młody', style: TextStyle(fontSize: 8, color: Colors.black54)),
+                        SizedBox(width: 30),
+                        Text('stary', style: TextStyle(fontSize: 8, color: Colors.black54)),
+                      ]),
+                      const SizedBox(height: 3),
                       for (final e in const [
-                        // iglaste
-                        ['SO', 'Sosna'], ['ŚW', 'Świerk'], ['MD', 'Modrzew'],
-                        ['DG', 'Daglezja'], ['CIS', 'Cis'],
-                        // liściaste
-                        ['DB', 'Dąb'], ['DB.S', 'Dąb szypułkowy'],
-                        ['DB.B', 'Dąb bezszypułkowy'], ['DB.C', 'Dąb czerwony'],
-                        ['KL', 'Klon'], ['BK', 'Buk'], ['JS', 'Jesion'],
-                        ['JW', 'Jawor'], ['WZ', 'Wiąz'], ['BRZ', 'Brzoza'],
-                        ['LP', 'Lipa'], ['AK', 'Akacja'], ['TP', 'Topola'],
-                        ['GB', 'Grab'], ['OS', 'Osika'],
-                        ['OL', 'Olcha'], ['OL.S', 'Olcha szara'],
+                        ['SO', 'Sosna'], ['ŚW', 'Świerk'], ['JD', 'Jodła'],
+                        ['BK', 'Buk'], ['DB', 'Dąb'], ['BRZ', 'Brzoza'],
+                        ['OL', 'Olcha'], ['OS', 'Osika'], ['MD', 'Modrzew'], ['GB', 'Grab'],
                       ])
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 1),
                           child: Row(mainAxisSize: MainAxisSize.min, children: [
-                            // młody (10 lat) — jasny
-                            Container(width: 10, height: 12,
-                                decoration: BoxDecoration(
-                                    color: _kolorWydzielenia(e[0], 10),
-                                    borderRadius: const BorderRadius.only(
-                                      topLeft: Radius.circular(2),
-                                      bottomLeft: Radius.circular(2)))),
-                            // stary (100 lat) — ciemny
-                            Container(width: 10, height: 12,
-                                decoration: BoxDecoration(
-                                    color: _kolorWydzielenia(e[0], 100),
-                                    borderRadius: const BorderRadius.only(
-                                      topRight: Radius.circular(2),
-                                      bottomRight: Radius.circular(2)))),
-                            const SizedBox(width: 5),
+                            // gradient wieku: młody (jasny) -> stary (ciemny)
+                            Container(width: 11, height: 12,
+                                decoration: BoxDecoration(color: _kolorGatunkuWiek(e[0], 10),
+                                    borderRadius: const BorderRadius.horizontal(left: Radius.circular(2)))),
+                            Container(width: 11, height: 12,
+                                decoration: BoxDecoration(color: _kolorGatunkuWiek(e[0], 55))),
+                            Container(width: 11, height: 12,
+                                decoration: BoxDecoration(color: _kolorGatunkuWiek(e[0], 100),
+                                    borderRadius: const BorderRadius.horizontal(right: Radius.circular(2)))),
+                            const SizedBox(width: 6),
                             Text(e[1], style: const TextStyle(fontSize: 11)),
                           ]),
                         ),
@@ -800,10 +664,8 @@ class _MapaEkranState extends State<MapaEkran> {
             ),
 
           // panel dolny: suwak dnia
-          // bottom = wysokosc paska systemu (Android 15+ edge-to-edge)
           Positioned(
-            left: 0, right: 0,
-            bottom: MediaQuery.viewPaddingOf(context).bottom,
+            left: 0, right: 0, bottom: 0,
             child: Card(
               margin: const EdgeInsets.all(8),
               child: Padding(
@@ -867,6 +729,17 @@ class _MapaEkranState extends State<MapaEkran> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
+          // ZNAJDŹ MNIE (GPS)
+          FloatingActionButton.small(
+            heroTag: 'gps',
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.blue,
+            onPressed: _szukamGps ? null : _znajdzMnie,
+            child: _szukamGps
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.my_location),
+          ),
+          const SizedBox(height: 16),
           // ZOOM +/- 
           FloatingActionButton.small(
             heroTag: 'zoomin',
@@ -884,54 +757,22 @@ class _MapaEkranState extends State<MapaEkran> {
             child: const Icon(Icons.remove),
           ),
           const SizedBox(height: 16),
-          // TRYB DODAWANIA REWIRU + koordynaty obok w jednym rzędzie
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              FloatingActionButton.extended(
-                heroTag: 'rewir',
-                backgroundColor: _trybRewiru
-                    ? const Color(0xFFD32F2F)
-                    : Colors.grey.shade300,
-                foregroundColor: _trybRewiru ? Colors.white : Colors.black87,
-                onPressed: () => setState(() => _trybRewiru = !_trybRewiru),
-                icon: Icon(_trybRewiru ? Icons.close : Icons.add_location_alt),
-                label: Text(_trybRewiru ? 'Anuluj' : 'Dodaj rewir'),
-              ),
-              const SizedBox(width: 8),
-              // Przycisk współrzędnych — zawsze widoczny obok "Dodaj rewir"
-              FloatingActionButton.small(
-                heroTag: 'rewir_koord',
-                backgroundColor: Colors.white,
-                foregroundColor: const Color(0xFF2E7D32),
-                tooltip: 'Dodaj rewir przez współrzędne',
-                onPressed: _trybRewiru ? null : _wpisKoordynaty,
-                child: const Icon(Icons.pin_drop),
-              ),
-            ],
+          // TRYB DODAWANIA REWIRU
+          FloatingActionButton.extended(
+            heroTag: 'rewir',
+            backgroundColor: _trybRewiru ? const Color(0xFFD32F2F) : Colors.grey.shade300,
+            foregroundColor: _trybRewiru ? Colors.white : Colors.black87,
+            onPressed: () => setState(() => _trybRewiru = !_trybRewiru),
+            icon: Icon(_trybRewiru ? Icons.close : Icons.add_location_alt),
+            label: Text(_trybRewiru ? 'Anuluj' : 'Dodaj rewir'),
           ),
           const SizedBox(height: 8),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // GPS — wyśrodkuj mapę na mojej pozycji
-              FloatingActionButton.small(
-                heroTag: 'gps',
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.black87,
-                tooltip: 'Moja pozycja',
-                onPressed: _gpsLocate,
-                child: const Icon(Icons.my_location),
-              ),
-              const SizedBox(width: 8),
-              FloatingActionButton.small(
-                heroTag: 'zarzadzaj',
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.black87,
-                onPressed: _panelRewirow,
-                child: const Icon(Icons.list),
-              ),
-            ],
+          FloatingActionButton.small(
+            heroTag: 'zarzadzaj',
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black87,
+            onPressed: _panelRewirow,
+            child: const Icon(Icons.list),
           ),
           const SizedBox(height: 10),
           FloatingActionButton.extended(
@@ -1148,7 +989,7 @@ class _MapaEkranState extends State<MapaEkran> {
     }
   }
 
-  void _pokazLasInfo(_Wydzielenie w, [LatLng? cel]) {
+  void _pokazLasInfo(_Wydzielenie w) {
     const nazwy = {
       'SO': 'Sosna', 'SOC': 'Sosna czarna', 'SW': 'Świerk', 'ŚW': 'Świerk',
       'JD': 'Jodła', 'BK': 'Buk', 'DB': 'Dąb', 'DBS': 'Dąb szypułkowy',
@@ -1170,7 +1011,7 @@ class _MapaEkranState extends State<MapaEkran> {
           children: [
             Row(children: [
               Container(width: 16, height: 16,
-                  decoration: BoxDecoration(color: _kolorWydzielenia(w.gatunek, w.wiek),
+                  decoration: BoxDecoration(color: _kolorGatunku(w.gatunek),
                       borderRadius: BorderRadius.circular(3))),
               const SizedBox(width: 8),
               Text(nazwa, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
@@ -1178,21 +1019,6 @@ class _MapaEkranState extends State<MapaEkran> {
             const SizedBox(height: 8),
             Text('Wiek: ${w.wiek} lat  ($faza)'),
             Text('Kod gatunku: ${w.gatunek}', style: const TextStyle(color: Colors.black54, fontSize: 13)),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  _nawigujDo(cel ?? w.srodek);
-                },
-                icon: const Icon(Icons.navigation, size: 18),
-                label: const Text('Nawiguj do tego miejsca'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF2E7D32),
-                ),
-              ),
-            ),
           ],
         ),
       ),
@@ -1327,6 +1153,51 @@ class _MapaEkranState extends State<MapaEkran> {
         ),
       ),
     );
+  }
+
+  LatLng? _mojaPozycja; // ostatnia znana pozycja GPS (kropka na mapie)
+  bool _szukamGps = false;
+
+  // pobiera pozycję GPS i przybliża mapę tak, by było widać lasy i hotspoty
+  Future<void> _znajdzMnie() async {
+    setState(() => _szukamGps = true);
+    try {
+      // 1) czy usługa lokalizacji włączona
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Włącz lokalizację (GPS) w telefonie')));
+        }
+        return;
+      }
+      // 2) uprawnienia
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Brak zgody na lokalizację')));
+        }
+        return;
+      }
+      // 3) pobierz pozycję
+      final pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.high));
+      final p = LatLng(pos.latitude, pos.longitude);
+      setState(() => _mojaPozycja = p);
+      // przybliż tak, by widać było zarys lasów i hotspoty (zoom 15)
+      _map.move(p, 15);
+      await _odswiezWszystko();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Nie udało się pobrać lokalizacji: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _szukamGps = false);
+    }
   }
 
   // wyszukiwanie: rozpoznaje współrzędne (dwie liczby) albo nazwę (przez Nominatim/OSM)
