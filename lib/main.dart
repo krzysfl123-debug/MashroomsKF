@@ -121,7 +121,12 @@ class _MapaEkranState extends State<MapaEkran> {
       await Future.wait([_wczytajPotencjal(), _wczytajRewiry()]);
       await _wczytajHotspoty(); // wokół aktualnego środka mapy
     } catch (e) {
-      _info = 'Błąd pobierania: $e';
+      final txt = e.toString();
+      if (txt.contains('57014') || txt.contains('timeout')) {
+        _info = 'Za duży obszar — przybliż mapę, aby zobaczyć grzyby.';
+      } else {
+        _info = 'Błąd pobierania: $e';
+      }
     } finally {
       if (mounted) setState(() => _laduje = false);
     }
@@ -141,10 +146,16 @@ class _MapaEkranState extends State<MapaEkran> {
   }
 
   Future<void> _wczytajHotspoty() async {
+    // Przy mocnym oddaleniu NIE pobieramy hotspotów (byłyby dziesiątki tysięcy
+    // punktów -> timeout bazy). Wtedy pokazujemy tylko makro (krajowy potencjał).
+    final z = _map.camera.zoom;
+    if (z < _zoomMikroMin) {
+      _hotspoty = [];
+      return;
+    }
     // Bierzemy WIDOCZNY prostokąt mapy (nie promień) — szybkie i tylko to, co widać.
     final b = _map.camera.visibleBounds;
     // Rozmiar kratki siatki zależny od zoomu: bliżej = drobniej = więcej szczegółu.
-    final z = _map.camera.zoom;
     final grid = _siatkaDlaZoomu(z);
     final res = await supabase.rpc('hotspots_bbox', params: {
       'in_lat_min': b.south,
