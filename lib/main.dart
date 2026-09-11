@@ -243,6 +243,29 @@ class _MapaEkranState extends State<MapaEkran> {
   }
 
   /// Kolor wg gatunku panującego drzewa (kod BDL species_cd).
+  /// Normalizuje kod gatunku wydzielenia do kodu z filtra (SOC→SO, DBS/DBB→DB itd.).
+  String _normKodLasu(String sp) {
+    final s = sp.toUpperCase();
+    if (s.startsWith('SO')) return 'SO';
+    if (s.startsWith('SW') || s.startsWith('ŚW')) return 'ŚW';
+    if (s.startsWith('JD')) return 'JD';
+    if (s.startsWith('BK')) return 'BK';
+    if (s.startsWith('DB')) return 'DB';
+    if (s.startsWith('BRZ') || s.startsWith('BR')) return 'BRZ';
+    if (s.startsWith('OL')) return 'OL';
+    if (s.startsWith('OS')) return 'OS';
+    if (s.startsWith('MD')) return 'MD';
+    if (s.startsWith('GB')) return 'GB';
+    return s;
+  }
+
+  /// Czy dane wydzielenie ma być pokazane wg filtra gatunków lasu.
+  /// Filtr pusty = pokaż wszystko; niepusty = tylko wybrane gatunki.
+  bool _lasWidoczny(String gatunek) {
+    if (_fLasy.isEmpty) return true;
+    return _fLasy.contains(_normKodLasu(gatunek));
+  }
+
   Color _kolorGatunku(String sp) {
     switch (sp.toUpperCase()) {
       case 'SO': return const Color(0xFF2E7D32); // sosna - ciemna zieleń
@@ -425,13 +448,14 @@ class _MapaEkranState extends State<MapaEkran> {
                 PolygonLayer(
                   polygons: [
                     for (final w in _las)
-                      for (final ring in w.pierscienie)
-                        Polygon(
-                          points: ring,
-                          color: _kolorGatunkuWiek(w.gatunek, w.wiek).withValues(alpha: 0.50),
-                          borderColor: _kolorGatunkuWiek(w.gatunek, w.wiek),
-                          borderStrokeWidth: 1,
-                        ),
+                      if (_lasWidoczny(w.gatunek))
+                        for (final ring in w.pierscienie)
+                          Polygon(
+                            points: ring,
+                            color: _kolorGatunkuWiek(w.gatunek, w.wiek).withValues(alpha: 0.50),
+                            borderColor: _kolorGatunkuWiek(w.gatunek, w.wiek),
+                            borderStrokeWidth: 1,
+                          ),
                   ],
                 ),
               // niewidoczne znaczniki w środkach wydzieleń — do dymka po kliknięciu
@@ -439,15 +463,16 @@ class _MapaEkranState extends State<MapaEkran> {
                 MarkerLayer(
                   markers: [
                     for (final w in _las)
-                      Marker(
-                        point: w.srodek,
-                        width: 22,
-                        height: 22,
-                        child: GestureDetector(
-                          onTap: () => _pokazLasInfo(w),
-                          child: const SizedBox.expand(),
+                      if (_lasWidoczny(w.gatunek))
+                        Marker(
+                          point: w.srodek,
+                          width: 22,
+                          height: 22,
+                          child: GestureDetector(
+                            onTap: () => _pokazLasInfo(w),
+                            child: const SizedBox.expand(),
+                          ),
                         ),
-                      ),
                   ],
                 ),
               // warstwa potencjału krajowego (makro) — TYLKO przy oddaleniu;
