@@ -22,6 +22,7 @@ const String kSupabaseAnon = 'sb_publishable_PGSV8ZZJ6ZwKleFZjpltkQ_FB0GmYzS';
 // 14 gatunków grzybów (zgodne z modelem agenta) — do filtra.
 const List<String> kGatunki = [
   'Borowik szlachetny', 'Borowik usiatkowany', 'Borowik ceglastoporowy',
+  'Borowik amerykański',
   'Podgrzybek brunatny', 'Podgrzybek zajączek', 'Maślak zwyczajny',
   'Maślak sitarz', 'Koźlarz babka', 'Koźlarz czerwony', 'Kurka',
   'Rydz', 'Czubajka kania', 'Gołąbek zielonawy', 'Gąska zielonka',
