@@ -337,13 +337,20 @@ def pobierz_pogode_komorek(cells, dni_wstecz=45, dni_wprzod=15):
                     seria[dt.date.fromisoformat(t)] = {
                         "t_max": d["temperature_2m_max"][k], "t_min": d["temperature_2m_min"][k],
                         "rain": d["rain_sum"][k], "kind": "archive"}
-            # forecast — nadpisuje pokrywające się dni (świeższe + sięga w przyszłość)
+            # forecast — dokłada TYLKO dni, których NIE ma jeszcze w archiwum.
+            # Pomiar (archive) ZAWSZE ma priorytet nad prognozą. Forecast służy do:
+            #  (a) dni przyszłych (których archiwum nie zna),
+            #  (b) wypełnienia luki, gdy ERA5 się opóźnia (ale to wciąż prognoza!).
             if j < len(fcst) and isinstance(fcst[j], dict) and "daily" in fcst[j]:
                 d = fcst[j]["daily"]
                 # prognoza zwraca opad jako 'precipitation_sum' (nie 'rain_sum')
                 opad = d.get("precipitation_sum") or d.get("rain_sum")
                 for k, t in enumerate(d["time"]):
-                    seria[dt.date.fromisoformat(t)] = {
+                    data = dt.date.fromisoformat(t)
+                    # NIE nadpisuj dnia, który ma już pomiar archiwalny
+                    if data in seria and seria[data].get("kind") == "archive":
+                        continue
+                    seria[data] = {
                         "t_max": d["temperature_2m_max"][k], "t_min": d["temperature_2m_min"][k],
                         "rain": opad[k] if opad else None, "kind": "forecast"}
             out[cell_key(lat, lon)] = seria
@@ -693,12 +700,16 @@ def _policz_obszar(conn, run_id, cele, stands, obszar_id, czy_region=True):
     #    (uwzględnia nadchodzące przesuszenia).
     for tryb in ("historia", "forecast"):
         if tryb == "historia":
-            # odfiltruj prognozę: zostaw tylko dni do dziś (pogoda archiwalna)
+            # TRYB HISTORIA: model widzi WYŁĄCZNIE realne pomiary (kind='archive').
+            # Żadnej prognozy — to co faktycznie spadło. Na tej podstawie liczymy,
+            # co wyrośnie za 4-14 dni z JUŻ zgromadzonej wilgoci.
             wmap = {}
             for k, seria in weather_map.items():
-                wmap[k] = {d: r for d, r in seria.items() if d <= dzis}
+                wmap[k] = {d: r for d, r in seria.items()
+                           if r.get("kind") == "archive" and d <= dzis}
             cele_tryb = [t for t in cele if t <= dzis + timedelta(days=14)]
         else:
+            # TRYB FORECAST: archiwum + prognoza (włączany przełącznikiem w apce).
             wmap = weather_map
             cele_tryb = cele
 
