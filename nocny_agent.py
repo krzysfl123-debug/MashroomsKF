@@ -74,15 +74,20 @@ def _preznosc_pary(T):
     return 6.112 * math.exp((17.62 * T) / (243.12 + T))
 
 
+# Mnożnik parowania sterowany z aplikacji (tabela ustawienia_modelu w bazie).
+# 1.0 = bazowe zachowanie; <1.0 = wolniejsze wysychanie (wilgotniej, więcej grzybów);
+# >1.0 = szybsze (bardziej sucho). Ustawiany na starcie skanu przez wczytaj_ustawienia().
+PAROWANIE_MULT = 1.0
+
+
 def parowanie_dnia(t_max, t_min, rh=68.0):
     """Dobowa zmiana wilgotności ściółki od temperatury (punkty 0-100/dobę).
     Dodatnia = ubytek (parowanie), ujemna = przyrost (rosa nocna).
     Oparte na niedosycie pary (VPD, rośnie wykładniczo z temp — zgodnie z literaturą
     o wysychaniu ściółki/paliwa leśnego). Dodatkowe przyspieszenie >18°C oddaje
-    nagrzewanie ściółki słońcem w upale. KALIBRACJA na obserwacji terenowej:
-    ~30°C => ściółka schodzi <60% (próg startu) w ~2,5 dnia, do stanu 'sucha jak
-    pieprz' (~25%) w ~4-5 dni. Poniżej 15°C parowanie wolne (las trzyma wilgoć
-    1,5-2 tyg.). Chłodna noc (t_min<10) dowilża rosą."""
+    nagrzewanie ściółki słońcem w upale. Całość skalowana przez PAROWANIE_MULT
+    (sterowany suwakiem w aplikacji — pozwala dokręcać model po obserwacji w terenie).
+    Poniżej 15°C parowanie wolne (las trzyma wilgoć). Chłodna noc (t_min<10) dowilża rosą."""
     if t_max is None:
         t_max = 18.0
     if t_min is None:
@@ -91,12 +96,29 @@ def parowanie_dnia(t_max, t_min, rh=68.0):
     es = _preznosc_pary(t_sr)
     ea = es * (rh / 100.0)
     vpd = max(es - ea, 0.0)
-    parowanie = vpd * 1.5
+    parowanie = vpd * 1.5 * PAROWANIE_MULT
     if t_sr > 18.0:
         parowanie *= 1.0 + (t_sr - 18.0) * 0.04   # upał: słońce dodatkowo grzeje ściółkę
     if t_min < 10.0:
         parowanie -= (10.0 - t_min) * 0.30        # rosa nocna dowilża
     return parowanie
+
+
+def wczytaj_ustawienia(conn):
+    """Wczytuje parametry modelu z tabeli ustawienia_modelu (sterowane z aplikacji).
+    Ustawia globalny PAROWANIE_MULT. Gdy tabeli/wiersza brak — zostaje 1.0 (bazowe)."""
+    global PAROWANIE_MULT
+    try:
+        with conn.cursor() as cur:
+            cur.execute("select wartosc from ustawienia_modelu where klucz = 'parowanie_mult'")
+            row = cur.fetchone()
+            if row and row[0] is not None:
+                PAROWANIE_MULT = float(row[0])
+                print(f"[ustawienia] parowanie_mult = {PAROWANIE_MULT}")
+            else:
+                print("[ustawienia] brak parowanie_mult — używam 1.0")
+    except Exception as e:
+        print(f"[ustawienia] nie udało się wczytać (używam 1.0): {e}")
 
 
 def symuluj_wilgotnosc(weather, do_daty, dni_hist=45, wilg0=40.0):
@@ -619,6 +641,7 @@ def run_makro(grid_step=0.2, horyzont=tuple(range(0, 29))):
     conn = db_conn()
     run_id = nowy_przebieg(conn, kind="makro")
     try:
+        wczytaj_ustawienia(conn)
         cele = daty_docelowe(horyzont)
         lon_min, lat_min, lon_max, lat_max = POLSKA_BBOX
 
@@ -742,6 +765,7 @@ def run_scan(horyzont=tuple(range(0, 29))):
     conn = db_conn()
     run_id = nowy_przebieg(conn, kind="detail")
     try:
+        wczytaj_ustawienia(conn)
         cele = daty_docelowe(horyzont)
 
         # a) predefiniowane regiony (np. Słupsk z loadera)
